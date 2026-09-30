@@ -1,0 +1,22 @@
+# 复制为 config.yaml 后填写（config.yaml 含密钥，勿提交到公开仓库）
+
+port: 8787
+intervalMinutes: 10
+historyDays: 7
+
+platforms:
+  deepseek:
+    enabled: true
+    # https://platform.deepseek.com/ -> API keys
+    apiKey: ""
+
+  chatgpt:
+    enabled: true
+    # chatgpt.com 登录后，从浏览器 DevTools -> Application -> Cookies 复制完整 Cookie 字符串
+    # 过期后图片上会显示告警，重新复制替换即可
+    cookie: ""
+
+  workbuddy:
+    enabled: true
+    # 从 WorkBuddy 登录态中提取 Bearer token（见 README「凭证获取」）
+    token: ""

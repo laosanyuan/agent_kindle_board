@@ -1,0 +1,7 @@
+node_modules
+data
+config.yaml
+preview*.png
+.workbuddy
+kindle
+README.md
