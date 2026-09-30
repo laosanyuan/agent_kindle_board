@@ -4,7 +4,9 @@ services:
     container_name: agent-kindle-board
     ports:
       - "8787:8787"
+    environment:
+      TZ: Asia/Shanghai
     volumes:
+      # 启动前请先 cp config.example.yaml config.yaml 并填好凭证
       - ./config.yaml:/app/config.yaml:ro
-      - ./data:/app/data
     restart: unless-stopped

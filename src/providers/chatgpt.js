@@ -31,17 +31,23 @@ async function fetchQuota(cfg) {
 
     // 优先 /backend-api/rate_limits，失败回退 conversation_limit
     let payload = null;
+    let lastStatus = null;
     for (const url of [
       'https://chatgpt.com/backend-api/rate_limits',
       'https://chatgpt.com/backend-api/conversation_limit',
     ]) {
       const res = await withTimeout(fetch(url, { headers }), 15000, 'ChatGPT 额度查询');
-      if (res.ok) {
-        payload = await res.json();
-        if (payload) break;
+      if (!res.ok) { lastStatus = res.status; continue; }
+      const body = await res.json();
+      // 空对象视为无效，继续尝试下一个接口
+      if (body && typeof body === 'object' && Object.keys(body).length > 0) {
+        payload = body;
+        break;
       }
     }
-    if (!payload) return fail(ID, NAME, '额度接口不可用（Cookie 或接口已变化）');
+    if (!payload) {
+      return fail(ID, NAME, lastStatus ? `额度接口 HTTP ${lastStatus}（接口可能已变化）` : '额度接口返回为空');
+    }
 
     const metrics = parseMetrics(payload);
     if (!metrics.length) return fail(ID, NAME, '额度接口结构变化，需更新解析');
@@ -64,7 +70,15 @@ async function fetchQuota(cfg) {
 }
 
 function normalizeReset(v) {
-  if (typeof v !== 'number') return null;
+  // 字符串：ISO 时间（"2026-09-30T12:00:00Z"）或数字字符串
+  if (typeof v === 'string') {
+    const s = v.trim();
+    if (!s) return null;
+    if (/^\d+$/.test(s)) return normalizeReset(Number(s));
+    const t = Date.parse(s);
+    return Number.isNaN(t) ? null : t;
+  }
+  if (typeof v !== 'number' || !Number.isFinite(v)) return null;
   if (v > 1e12) return v;              // 毫秒时间戳
   if (v > 1e9) return v * 1000;        // 秒时间戳
   return Date.now() + v * 1000;        // 剩余秒数

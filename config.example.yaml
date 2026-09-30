@@ -2,7 +2,15 @@
 
 port: 8787
 intervalMinutes: 10
-historyDays: 7
+
+# 面板时间所用时区（容器默认 UTC，不设会差 8 小时）
+timezone: Asia/Shanghai
+
+# Kindle 横放方向：设备顶部朝哪边
+#   left  - 顶部朝左（默认）
+#   right - 顶部朝右
+#   none  - 不旋转，输出 1024x758（浏览器查看用，Kindle 上会显示异常）
+orientation: left
 
 platforms:
   deepseek:

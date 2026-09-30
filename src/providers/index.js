@@ -4,7 +4,24 @@ const workbuddy = require('./workbuddy');
 
 const REGISTRY = { deepseek, chatgpt, workbuddy };
 
+// 只有瞬时故障（网络抖动、超时、服务端 5xx）才重试；凭证缺失/过期重试无意义
+const TRANSIENT = /超时|timeout|fetch failed|ECONN|ENOTFOUND|EAI_AGAIN|socket|network|TLS|HTTP 5\d\d/i;
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+async function fetchWithRetry(provider, cfg) {
+  const first = await provider.fetchQuota(cfg);
+  if (first.ok || !TRANSIENT.test(first.error || '')) return first;
+  await sleep(2000);
+  const second = await provider.fetchQuota(cfg);
+  if (second.ok) return second;
+  return { ...first, error: `${first.error}（已重试 1 次）` };
+}
+
 // MOCK=1 时生成假数据，便于无凭证验证排版
+// 再加 MOCK_STALE=1 可把 ChatGPT 标记为「数据陈旧」，验证降级排版
 function mockQuota(id, name) {
   const now = Date.now();
   if (id === 'deepseek') {
@@ -15,7 +32,7 @@ function mockQuota(id, name) {
     };
   }
   if (id === 'chatgpt') {
-    return {
+    const m = {
       id, name, ok: true, big: '48', unit: '%', sub: '5 小时窗口剩余',
       percent: 48,
       resetAt: now + (2 * 60 + 41) * 60000,
@@ -25,6 +42,7 @@ function mockQuota(id, name) {
       ],
       detail: 'Plus 订阅窗口额度', error: null,
     };
+    return process.env.MOCK_STALE === '1' ? { ...m, stale: true, staleMinutes: 12 } : m;
   }
   return {
     id, name, ok: true, big: '12460', unit: 'credits', sub: '积分剩余（基础 + 奖励）',
@@ -47,7 +65,7 @@ async function collectAll(config) {
       continue;
     }
     if (!cfg.enabled) continue;
-    results.push(await provider.fetchQuota(cfg));
+    results.push(await fetchWithRetry(provider, cfg));
   }
   return results;
 }

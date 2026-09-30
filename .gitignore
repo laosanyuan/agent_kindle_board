@@ -1,5 +1,6 @@
 node_modules/
 data/
 config.yaml
-preview*.png
+# 只忽略临时预览图（preview_stale.png 等）；preview.png 是 README 引用的示例图，必须提交
+preview_*.png
 .workbuddy/
