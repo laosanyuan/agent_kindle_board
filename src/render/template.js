@@ -69,35 +69,36 @@ function fmtCountdown(resetAt, now) {
 }
 
 function clockIcon(cx, cy) {
-  return `<circle cx="${cx}" cy="${cy}" r="7" fill="none" stroke="#555" stroke-width="1.5"/>
-<line x1="${cx}" y1="${cy}" x2="${cx}" y2="${cy - 4}" stroke="#555" stroke-width="1.5" stroke-linecap="round"/>
-<line x1="${cx}" y1="${cy}" x2="${cx + 3}" y2="${cy}" stroke="#555" stroke-width="1.5" stroke-linecap="round"/>`;
+  return `<circle cx="${cx}" cy="${cy}" r="8" fill="none" stroke="#333" stroke-width="2"/>
+<line x1="${cx}" y1="${cy}" x2="${cx}" y2="${cy - 4.5}" stroke="#333" stroke-width="2" stroke-linecap="round"/>
+<line x1="${cx}" y1="${cy}" x2="${cx + 3.5}" y2="${cy}" stroke="#333" stroke-width="2" stroke-linecap="round"/>`;
 }
 
 function warnIcon(x, y) {
-  return `<path d="M${x + 9} ${y} L${x + 18} ${y + 16} L${x} ${y + 16} Z" fill="none" stroke="#111" stroke-width="1.6" stroke-linejoin="round"/>
-<line x1="${x + 9}" y1="${y + 6}" x2="${x + 9}" y2="${y + 11}" stroke="#111" stroke-width="1.6" stroke-linecap="round"/>
-<circle cx="${x + 9}" cy="${y + 13.5}" r="1" fill="#111"/>`;
+  return `<path d="M${x + 9} ${y} L${x + 18} ${y + 16} L${x} ${y + 16} Z" fill="none" stroke="#111" stroke-width="2" stroke-linejoin="round"/>
+<line x1="${x + 9}" y1="${y + 6}" x2="${x + 9}" y2="${y + 11}" stroke="#111" stroke-width="2" stroke-linecap="round"/>
+<circle cx="${x + 9}" cy="${y + 13.5}" r="1.2" fill="#111"/>`;
 }
 
 // 单个额度窗口：标签 + 百分比 + 进度条 + 重置倒计时
+// 墨水屏适配：槽改为白底深描边（浅灰槽在 e-ink 上发灰），文字加深加粗
 function metricRow(m, x, y, w, now, tz) {
-  const fillW = Math.max(2, Math.round((w * m.percent) / 100));
+  const fillW = Math.max(3, Math.round((w * m.percent) / 100));
   const cd = fmtCountdown(m.resetAt, now);
   const pct = `${m.percent}%`;
-  const labelW = w - textWidth(pct, 13) - 12;
-  let out = `<text x="${x}" y="${y}" font-size="13" fill="#666">${esc(fit(m.label, labelW, 13))}</text>`;
-  out += `<text x="${x + w}" y="${y}" text-anchor="end" font-size="13" font-weight="600" fill="#111">${pct}</text>`;
-  out += `<rect x="${x}" y="${y + 10}" width="${w}" height="14" rx="7" fill="#e3e3e3"/>`;
-  out += `<rect x="${x}" y="${y + 10}" width="${fillW}" height="14" rx="7" fill="#1a1a1a"/>`;
+  const labelW = w - textWidth(pct, 14) - 12;
+  let out = `<text x="${x}" y="${y}" font-size="14" font-weight="500" fill="#333">${esc(fit(m.label, labelW, 14))}</text>`;
+  out += `<text x="${x + w}" y="${y}" text-anchor="end" font-size="14" font-weight="700" fill="#111">${pct}</text>`;
+  out += `<rect x="${x}" y="${y + 10}" width="${w}" height="16" rx="8" fill="#ffffff" stroke="#444" stroke-width="2"/>`;
+  out += `<rect x="${x + 3}" y="${y + 13}" width="${Math.max(0, fillW - 6)}" height="10" rx="5" fill="#1a1a1a"/>`;
   if (cd) {
-    out += clockIcon(x + 7, y + 44);
-    out += `<text x="${x + 19}" y="${y + 48}" font-size="12" fill="#555">${esc(fit(cd, w - 19, 12))}</text>`;
+    out += clockIcon(x + 7, y + 45);
+    out += `<text x="${x + 21}" y="${y + 50}" font-size="13" fill="#444">${esc(fit(cd, w - 21, 13))}</text>`;
   }
   return out;
 }
 
-// 大数字 + 单位，按可用宽度自动缩字号
+// 大数字 + 单位，按可用宽度自动缩字号（墨水屏：字重拉满到 700/800）
 function bigNumber(value, unit, cx, y, maxWidth) {
   const unitSize0 = unit && unit.length > 3 ? 16 : 24;
   let size = 60;
@@ -108,7 +109,7 @@ function bigNumber(value, unit, cx, y, maxWidth) {
     size = Math.max(24, Math.floor(size * ratio));
     unitSize = Math.max(10, Math.floor(unitSize * ratio));
   }
-  return `<text x="${cx}" y="${y}" text-anchor="middle" font-size="${size}" font-weight="600" fill="#0a0a0a">${esc(value)}${unit ? `<tspan font-size="${unitSize}" font-weight="400" fill="#333"> ${esc(unit)}</tspan>` : ''}</text>`;
+  return `<text x="${cx}" y="${y}" text-anchor="middle" font-size="${size}" font-weight="700" fill="#000000">${esc(value)}${unit ? `<tspan font-size="${unitSize}" font-weight="500" fill="#111"> ${esc(unit)}</tspan>` : ''}</text>`;
 }
 
 function card(r, x, y, w, h, now, tz) {
@@ -119,20 +120,20 @@ function card(r, x, y, w, h, now, tz) {
   const hasMetrics = metrics.length > 0;
 
   let out = `<g>
-<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="14" fill="#ffffff" stroke="#c9c9c9" stroke-width="1.5"/>
+<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="14" fill="#ffffff" stroke="#333" stroke-width="2.5"/>
 ${icon(r.id, x + pad, y + 22, w < 260 ? 42 : 52)}
-<text x="${x + pad + (w < 260 ? 50 : 66)}" y="${y + 48}" font-size="22" font-weight="600" fill="#111">${esc(fit(r.name, inner - (w < 260 ? 50 : 66), 22))}</text>
-${r.ok ? (r.stale ? `<circle cx="${x + pad + 71}" cy="${y + 66}" r="4" fill="none" stroke="#111" stroke-width="1.5"/>` : `<circle cx="${x + pad + 71}" cy="${y + 66}" r="4" fill="#111"/>`) : `<circle cx="${x + pad + 71}" cy="${y + 66}" r="4" fill="#888"/>`}
-<text x="${x + pad + 81}" y="${y + 71}" font-size="13" fill="${r.stale ? '#111' : '#666'}">${r.ok ? (r.stale ? `陈旧 ${r.staleMinutes} 分钟` : '正常') : '异常'}</text>
-<line x1="${x + pad}" y1="${y + 94}" x2="${x + w - pad}" y2="${y + 94}" stroke="#ddd" stroke-width="1"/>`;
+<text x="${x + pad + (w < 260 ? 50 : 66)}" y="${y + 48}" font-size="22" font-weight="700" fill="#000">${esc(fit(r.name, inner - (w < 260 ? 50 : 66), 22))}</text>
+${r.ok ? (r.stale ? `<circle cx="${x + pad + 71}" cy="${y + 66}" r="4.5" fill="none" stroke="#111" stroke-width="2"/>` : `<circle cx="${x + pad + 71}" cy="${y + 66}" r="4.5" fill="#111"/>`) : `<circle cx="${x + pad + 71}" cy="${y + 66}" r="4.5" fill="#666"/>`}
+<text x="${x + pad + 81}" y="${y + 71}" font-size="14" font-weight="500" fill="${r.stale ? '#111' : '#444'}">${r.ok ? (r.stale ? `陈旧 ${r.staleMinutes} 分钟` : '正常') : '异常'}</text>
+<line x1="${x + pad}" y1="${y + 94}" x2="${x + w - pad}" y2="${y + 94}" stroke="#888" stroke-width="2"/>`;
 
   // 大数字区
   if (r.ok) {
     out += bigNumber(r.big, r.unit, cx, y + 190, inner);
   } else {
-    out += `<text x="${cx}" y="${y + 190}" text-anchor="middle" font-size="60" font-weight="600" fill="#999">--</text>`;
+    out += `<text x="${cx}" y="${y + 190}" text-anchor="middle" font-size="60" font-weight="700" fill="#666">--</text>`;
   }
-  out += `<text x="${cx}" y="${y + 220}" text-anchor="middle" font-size="14" fill="#666">${esc(fit(r.sub, inner, 14))}</text>`;
+  out += `<text x="${cx}" y="${y + 221}" text-anchor="middle" font-size="15" font-weight="500" fill="#333">${esc(fit(r.sub, inner, 15))}</text>`;
 
   if (hasMetrics) {
     // 窗口额度行（ChatGPT 的 5 小时 / 周额度等），最多 3 行，行距按剩余高度自适应
@@ -145,9 +146,9 @@ ${r.ok ? (r.stale ? `<circle cx="${x + pad + 71}" cy="${y + 66}" r="4" fill="non
       my += step;
     }
   } else if (r.ok) {
-    out += `<text x="${cx}" y="${y + 262}" text-anchor="middle" font-size="14" fill="#555">${esc(fit('按量计费 · 无总额上限', inner, 14))}</text>`;
+    out += `<text x="${cx}" y="${y + 263}" text-anchor="middle" font-size="15" font-weight="500" fill="#333">${esc(fit('按量计费 · 无总额上限', inner, 15))}</text>`;
     if (r.detail) {
-      out += `<text x="${cx}" y="${y + 292}" text-anchor="middle" font-size="13" fill="#888">${esc(fit(r.detail, inner, 13))}</text>`;
+      out += `<text x="${cx}" y="${y + 293}" text-anchor="middle" font-size="14" fill="#555">${esc(fit(r.detail, inner, 14))}</text>`;
     }
   } else {
     // 失败态：原因最多两行，按宽度截断
@@ -155,22 +156,22 @@ ${r.ok ? (r.stale ? `<circle cx="${x + pad + 71}" cy="${y + 66}" r="4" fill="non
     const lines = [];
     let rest = reason;
     for (let i = 0; i < 2 && rest; i++) {
-      const piece = fit(rest, inner, 13);
+      const piece = fit(rest, inner, 14);
       if (piece === rest) { lines.push(piece); rest = ''; }
       else { lines.push(piece); rest = rest.slice(piece.length - 1); }
     }
     out += warnIcon(x + pad, y + 250);
-    out += `<text x="${x + pad + 24}" y="${y + 263}" font-size="13" font-weight="600" fill="#111">采集失败</text>`;
+    out += `<text x="${x + pad + 24}" y="${y + 263}" font-size="14" font-weight="700" fill="#111">采集失败</text>`;
     lines.forEach((ln, i) => {
-      out += `<text x="${x + pad}" y="${y + 292 + i * 22}" font-size="13" fill="#555">${esc(ln)}</text>`;
+      out += `<text x="${x + pad}" y="${y + 292 + i * 22}" font-size="14" fill="#444">${esc(ln)}</text>`;
     });
   }
 
   const footY = y + h - 24;
-  out += `<text x="${x + pad}" y="${footY}" font-size="12" fill="#999">采集于 ${fmtTime(now, tz)}</text>`;
+  out += `<text x="${x + pad}" y="${footY}" font-size="13" fill="#555">采集于 ${fmtTime(now, tz)}</text>`;
   if (hasMetrics && r.detail) {
-    const timeW = textWidth(`采集于 ${fmtTime(now, tz)}`, 12) + 12;
-    out += `<text x="${x + w - pad}" y="${footY}" text-anchor="end" font-size="12" fill="#999">${esc(fit(r.detail, inner - timeW, 12))}</text>`;
+    const timeW = textWidth(`采集于 ${fmtTime(now, tz)}`, 13) + 12;
+    out += `<text x="${x + w - pad}" y="${footY}" text-anchor="end" font-size="13" fill="#555">${esc(fit(r.detail, inner - timeW, 13))}</text>`;
   }
   out += '</g>';
   return out;
@@ -194,13 +195,13 @@ function buildSVG(results, now, opts = {}) {
     body += card(r, margin + i * (cardW + gap), cardY, cardW, cardH, now, timezone);
   });
 
-  const footerLine = `<line x1="${margin}" y1="622" x2="${CW - margin}" y2="622" stroke="#ccc" stroke-width="1"/>`;
+  const footerLine = `<line x1="${margin}" y1="622" x2="${CW - margin}" y2="622" stroke="#777" stroke-width="2"/>`;
   const leftFoot = `每 ${intervalMinutes} 分钟采集 · 最后更新 ${fmtDateTime(now, timezone)}`;
   const rightFoot = `agent-kindle-board · ${okCount}/${results.length} 正常${staleCount ? ` · ${staleCount} 陈旧` : ''}`;
 
   let footer = `${footerLine}
-<text x="${margin}" y="656" font-size="14" fill="#555">${esc(leftFoot)}</text>
-<text x="${CW - margin}" y="656" text-anchor="end" font-size="13" fill="#999">${esc(rightFoot)}</text>`;
+<text x="${margin}" y="656" font-size="15" font-weight="500" fill="#333">${esc(leftFoot)}</text>
+<text x="${CW - margin}" y="656" text-anchor="end" font-size="14" fill="#555">${esc(rightFoot)}</text>`;
 
   if (alerts.length > 0) {
     // 陈旧用「沿用 N 分钟前的数值」表述，失败用真实原因
@@ -208,13 +209,13 @@ function buildSVG(results, now, opts = {}) {
       .map((a) => (a.stale ? `${a.name}: 沿用 ${a.staleMinutes} 分钟前的数值` : `${a.name}: ${a.error}`))
       .join('；');
     footer += warnIcon(margin, 674);
-    footer += `<text x="${margin + 26}" y="688" font-size="14" fill="#111">${esc(fit(msg, CW - margin * 2 - 26, 14))}</text>`;
+    footer += `<text x="${margin + 26}" y="688" font-size="15" font-weight="500" fill="#111">${esc(fit(msg, CW - margin * 2 - 26, 15))}</text>`;
   } else {
-    footer += `<text x="${margin}" y="688" font-size="13" fill="#999">所有平台运行正常</text>`;
+    footer += `<text x="${margin}" y="688" font-size="14" fill="#555">所有平台运行正常</text>`;
   }
 
-  const content = `<text x="${margin}" y="50" font-size="28" font-weight="600" fill="#0a0a0a">AI 额度监控</text>
-<text x="${CW - margin}" y="50" text-anchor="end" font-size="16" fill="#666">${fmtDateTime(now, timezone)}</text>
+  const content = `<text x="${margin}" y="51" font-size="30" font-weight="700" fill="#000">AI 额度监控</text>
+<text x="${CW - margin}" y="50" text-anchor="end" font-size="17" font-weight="500" fill="#333">${fmtDateTime(now, timezone)}</text>
 ${body}
 ${footer}`;
 

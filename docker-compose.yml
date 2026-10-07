@@ -10,8 +10,8 @@ services:
     restart: unless-stopped
 
   board:
-    # docker load 导入镜像后直接 up；从源码构建: docker build -t agent-kindle-board:0.1.4 .
-    image: agent-kindle-board:0.1.4
+    # docker load 导入镜像后直接 up；从源码构建: docker build -t agent-kindle-board:0.1.8 .
+    image: agent-kindle-board:0.1.8
     container_name: agent-kindle-board
     ports:
       - "8787:8787"

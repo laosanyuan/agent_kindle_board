@@ -11,3 +11,18 @@ preview_real.png
 .workbuddy/
 # 含节点 UUID，勿提交
 deploy/xray/config.json
+
+# —— 调试产物 / 一次性脚本 / 第三方大包 ——
+# 真机抓屏与比对产物（fb raw + 截图）
+outputs/
+# 调试日志、扫描产物
+.sync.out
+.usb2.log
+kindle_ip.txt
+# _ 前缀 = 临时/含凭证的一次性脚本（如 _ssh.py 带明文密码，勿提交）
+tools/_*.py
+tools/_*.js
+# 第三方越狱包（47MB 二进制，需要时自行下载）
+deploy/kindle-jailbreak/
+kindle/RUNME*.sh
+kindle/emergency.sh

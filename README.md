@@ -31,11 +31,20 @@ docker compose up -d                                    # compose 已指向该�
 
 接口：
 
-- `GET /image.png` — 面板图（Kindle 拉这个，758×1024，已按横放方向旋转）
+- `GET /image.png` — 面板图（RGB，758×1024，已按横放方向旋转；给浏览器/board.html 用）
 - `GET /image.png?raw=1` — 未旋转的 1024×758，浏览器查看用
+- `GET /band/0.png … /band/15.png` — **Kindle eips 直刷用的灰度条带**（758×64 × 16 条，colortype 0）
+- `GET /board.html` — 网页版面板（自动刷新），给没越狱的 Kindle 用自带浏览器打开的兜底方案
 - `GET /api/etag` — 数据指纹（额度数值的哈希），Kindle 按需刷新用
 - `GET /api/data` — 原始 JSON，排查用
 - `GET /health` — 健康检查
+
+> **为什么 Kindle 不直接拉 `/image.png`？** KPW1（5.3.4 固件）的 `eips` 内置 PNG 解码器
+> 有硬伤：RGB(colortype 2) 或单文件 >~12KB 的 PNG 会画出「不同区域不同缩放」的拼贴花屏
+> （真机逐像素验证过）。只有 ≤12KB 的灰度(colortype 0) PNG 能 1:1 精确绘制。
+> 所以服务端把整图切成 16 条 758×64 灰度条带，Kindle 端逐条 `eips -g -x 0 -y <i*64>` 拼
+> 出完整画面。注意 sharp 的 `.greyscale()` 输出的仍是 colortype 2，必须自编码
+> colortype 0（见 `src/render/render.js` 里的 `encodeGrayPng`）。
 
 **失败降级**：瞬时故障（超时、网络抖动、5xx）自动重试 1 次；仍失败则沿用该平台上一次成功的数值，卡片状态显示「陈旧 X 分钟」，超过 `staleMaxMinutes`（默认 180 分钟）才判定为真正失败显示「--」。凭证缺失/过期不重试、不降级。
 
@@ -104,23 +113,42 @@ platforms:
 
 ## Kindle KPW1 配置（一次性）
 
-固件版本先在「设置 → 设备信息」确认，KPW1 全系列（5.1.x ~ 5.6.x）均可越狱，细节以 MobileRead 对应固件的帖子为准。
+两条路，按设备状态选：
 
-1. **越狱** → **装 KUAL + USBNetwork**（提供 SSH）
-2. **传脚本并改 NAS 地址**：
+### A. 免越狱（先看效果）
+
+Kindle 原生系统 → 菜单 → **体验版浏览器** → 打开 `http://<NAS_IP>:8787/board.html`。
+页面定时取 `/api/etag` 比对，额度变了才换图，并兜底整页刷新（`/board.html?refresh=300` 改秒数，默认 600）。
+局限：浏览器顶部有地址栏占空间，设备仍可能自动休眠。适合先验证「Kindle 能不能访问 NAS」。
+
+### B. 越狱后直刷帧缓冲（长期方案）
+
+固件版本先在「设置 → 设备信息」确认。KPW1 全系列可越狱；5.0.x ~ 5.4.4.2 用 NiLuJe 的 `kindle-5.4-jailbreak`（把包内 7 个文件放根目录 → 【首页 → 菜单 → 设置 → 菜单 → 更新您的 Kindle】，屏幕下方出现 `**** JAILBREAK ****` 即成功），细节以 MobileRead 原帖为准。
+
+1. **越狱** → **装 KUAL + USBNetwork**（提供 SSH；改 `usbnet/etc/config` 里 `USE_WIFI=true` 可走 WiFi 直连）
+2. **传脚本**（U 盘拷也行，注意保持 LF 换行）：
    ```bash
-   scp kindle/board.sh root@<Kindle_IP>:/mnt/us/board.sh
-   ssh root@<Kindle_IP> 'chmod +x /mnt/us/board.sh && sed -i "s|http://192.168.1.10:8787|http://<NAS_IP>:8787|" /mnt/us/board.sh'
+   scp kindle/board.sh kindle/install.sh root@<Kindle_IP>:/mnt/us/
+   ssh root@<Kindle_IP> 'sh /mnt/us/install.sh'
    ```
-3. **验证并常驻**：先 `nohup /mnt/us/board.sh &` 看是否刷出图，再做成开机启动（KUAL 扩展或 `/etc/rc5.d` 钩子）
-4. **横放**即可，图片已是 758×1024 旋转版，直接写帧缓冲
+   `install.sh` 会去掉 CRLF、写 `/etc/upstart/board.conf`（framework 起来后启动 + 异常退出自动拉起）、立刻启动并打印日志
+3. **横放**即可，图片已是 758×1024 旋转版，直接写帧缓冲
 
 两个常见问题：
 
 - **屏幕上的图是倒的** → config 里 `orientation` 改成 `right`（横放方向和预设的相反）
 - **Kindle 一直亮着但图不更新** → 看卡片第二行的失败原因；排查 Kindle 能否 `wget` 到 NAS、`board.sh` 是否还在运行（`/mnt/us/board.log`）
+- **刷完图被覆盖** → 设备停在**多看**界面时 UI 会覆盖帧缓冲；越狱相关操作（搜索栏 `;` 命令）也只能在原生系统里做，多看界面没有命令入口
+- **画面左边缘有一条时钟/电量黑条** → Kindle 桌面状态栏（pillowd）。已在 `board.sh` 启动时执行 `/sbin/stop pillow` 和 `/sbin/stop framework` 停掉（画面 100% 干净）；副作用是触摸屏/按键不响应、停到开机画面一闪后被接管，**重启 Kindle 即恢复原厂行为**。恢复原厂就把 `board.sh` 里那两行 stop 注释掉再重启。
 
-脚本按需刷新：每 `CHECK`（60）秒取一次 `/api/etag` 与本地比对，**数据没变就不刷屏**（省电、不闪烁），超过 `FORCE_EVERY`（3600 秒）没变化也强制刷一次，让面板时间戳保持更新。想更省电就调大 `CHECK`。
+KPW1 真机踩过的坑（改代码前必读）：
+
+- `eips` 只能精确画 **≤~12KB 的灰度(colortype 0) PNG**；RGB 或大图会输出拼贴花屏 → 服务端已按 64 行/条切 16 条灰度条带（`/band/N.png`），别改回整图直刷
+- 该机器的 BusyBox `ps` **列不全进程**，判断 board.sh 是否活着要扫 `/proc/*/cmdline`；杀进程时注意别把含同名关键字的自己 kill 了（ssh 远程命令行也算）
+- 开机自启挂在 `framework_ready` 上时，**framework 每次唤醒/恢复都会再触发一次**，多实例会互相覆盖画面 —— `board.sh` 启动时的单实例防护（杀掉其它实例）不要删
+- **墨水屏渲染准则（0.1.8 起生效）**：e-ink 上细字重/浅灰/1px 线都会发虚 —— 字重一律 ≥600（标题/大数字 700）、灰阶文字不浅于 `#555`、线条 ≥2px、进度条用「白底 + 深描边 + 黑色填充」而不是浅灰槽。改模板时别退回浅灰细线风格
+
+脚本按需刷新：每 `CHECK`（30）秒取一次 `/api/etag` 与本地比对，**数据变了才重新下载条带**，没变最多每 `FORCE_EVERY`（60 秒）重画一次——重画必须比 framework 的首页重绘频繁，否则画面会被盖掉。每 20 轮做一次全刷除残影。
 
 脚本会循环重设 `powerd preventScreenSaver` 防止固件恢复休眠；`eips -g` 直写帧缓冲，刷新瞬间闪一次全刷是防残影，正常。
 
