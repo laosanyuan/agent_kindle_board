@@ -10,7 +10,7 @@ set -euo pipefail
 APP_DIR="$(cd "$(dirname "$0")" && pwd)"
 PORT=8787
 NET=kindle-net
-BOARD_IMG=agent-kindle-board:0.1.4
+BOARD_IMG=agent-kindle-board:0.1.8
 XRAY_IMG=ghcr.io/xtls/xray-core:latest
 
 # 群晖的 docker 可能不在普通用户 PATH 里，逐个探测
@@ -25,7 +25,7 @@ echo "== docker 版本 =="
 run version --format '{{.Server.Version}}'
 
 # 1) 导入镜像（没有 tar 包就跳过，假定已导入或能直接 pull）
-for f in "$APP_DIR"/agent-kindle-board-0.1.4-amd64.tar.gz "$APP_DIR"/xray-core-latest.tar.gz; do
+for f in "$APP_DIR"/agent-kindle-board-*-amd64.tar.gz "$APP_DIR"/xray-core-latest.tar.gz; do
   [ -f "$f" ] || continue
   echo "== 导入 $(basename "$f") =="
   run load -i "$f"
