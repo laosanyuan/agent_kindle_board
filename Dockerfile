@@ -1,16 +1,18 @@
-FROM node:22-slim
+FROM node:22-alpine
 
 ENV TZ=Asia/Shanghai
 
 WORKDIR /app
 
-# 中文字体（SVG 渲染依赖）+ 基础工具
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends fonts-noto-cjk ca-certificates tzdata \
-  && rm -rf /var/lib/apt/lists/*
+# 中文字体：文泉驿正黑 16MiB，够用；fonts-noto-cjk 是完整 CJK 字形集（88MiB），面板用不到
+# fontconfig 供 sharp 查找字体
+# curl：走代理时用它发请求（Cloudflare 会拦 Node undici 的 TLS 指纹，curl 可以过）
+RUN apk add --no-cache font-wqy-zenhei fontconfig tzdata curl \
+  && fc-cache -f >/dev/null 2>&1
 
-COPY package.json ./
-RUN npm install --omit=dev --no-audit --no-fund
+COPY package.json package-lock.json ./
+RUN npm install --omit=dev --no-audit --no-fund \
+  && rm -rf /root/.npm
 
 COPY src ./src
 COPY assets ./assets

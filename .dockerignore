@@ -4,5 +4,6 @@ config.yaml
 preview*.png
 .workbuddy
 kindle
+tools
 README.md
 .git

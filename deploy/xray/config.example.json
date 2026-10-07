@@ -1,0 +1,47 @@
+{
+  "_comment": "复制为 config.json 后填写。对应 vmess + websocket + 无 TLS 的节点；其它协议改 streamSettings 与 protocol 即可。",
+  "log": { "loglevel": "warning" },
+  "inbounds": [
+    {
+      "tag": "http-in",
+      "listen": "0.0.0.0",
+      "port": 10809,
+      "protocol": "http",
+      "settings": { "allowTransparent": false }
+    }
+  ],
+  "outbounds": [
+    {
+      "tag": "proxy",
+      "protocol": "vmess",
+      "settings": {
+        "vnext": [
+          {
+            "address": "你的节点地址",
+            "port": 443,
+            "users": [
+              { "id": "你的 UUID", "alterId": 0, "security": "auto" }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "ws",
+        "security": "none",
+        "wsSettings": { "path": "/", "headers": {} }
+      }
+    },
+    {
+      "tag": "direct",
+      "protocol": "freedom",
+      "settings": {}
+    }
+  ],
+  "routing": {
+    "domainStrategy": "AsIs",
+    "rules": [
+      { "type": "field", "outboundTag": "direct", "ip": ["geoip:private", "geoip:cn"] },
+      { "type": "field", "outboundTag": "direct", "domain": ["geosite:cn"] }
+    ]
+  }
+}

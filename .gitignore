@@ -3,4 +3,11 @@ data/
 config.yaml
 # 只忽略临时预览图（preview_stale.png 等）；preview.png 是 README 引用的示例图，必须提交
 preview_*.png
+container_raw.png
+preview_real.png
+*.tar.gz
+.chrome-profile/
+.chrome-profile-*/
 .workbuddy/
+# 含节点 UUID，勿提交
+deploy/xray/config.json

@@ -1,12 +1,30 @@
 services:
+  # 出网代理：把 vmess 节点转成 HTTP 代理，只给 board 用（不需要暴露端口到宿主机）
+  xray:
+    image: ghcr.io/xtls/xray-core:latest
+    container_name: xray
+    command: ["run", "-c", "/etc/xray/config.json"]
+    volumes:
+      # 节点配置，含 UUID，勿提交到公开仓库
+      - ./deploy/xray/config.json:/etc/xray/config.json:ro
+    restart: unless-stopped
+
   board:
-    build: .
+    # docker load 导入镜像后直接 up；从源码构建: docker build -t agent-kindle-board:0.1.4 .
+    image: agent-kindle-board:0.1.4
     container_name: agent-kindle-board
     ports:
       - "8787:8787"
     environment:
       TZ: Asia/Shanghai
+      # 代理也可在这里注入（会覆盖 config.yaml 的 proxy.url）：
+      # PROXY_URL: "http://xray:10809"
+    extra_hosts:
+      # 需要时用 host.docker.internal 指代宿主机（容器内 127.0.0.1 不是宿主）
+      - "host.docker.internal:host-gateway"
     volumes:
       # 启动前请先 cp config.example.yaml config.yaml 并填好凭证
       - ./config.yaml:/app/config.yaml:ro
+    depends_on:
+      - xray
     restart: unless-stopped

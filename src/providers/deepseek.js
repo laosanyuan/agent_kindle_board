@@ -1,4 +1,5 @@
 const { withTimeout, fail } = require('./base');
+const { httpFetch } = require('../proxy');
 
 const ID = 'deepseek';
 const NAME = 'DeepSeek';
@@ -10,9 +11,9 @@ async function fetchQuota(cfg) {
 
   try {
     const res = await withTimeout(
-      fetch('https://api.deepseek.com/user/balance', {
+      httpFetch('https://api.deepseek.com/user/balance', {
         headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
-      }),
+      }, ID),
       15000,
       'DeepSeek 余额查询'
     );

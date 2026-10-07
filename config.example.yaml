@@ -12,6 +12,12 @@ timezone: Asia/Shanghai
 #   none  - 不旋转，输出 1024x758（浏览器查看用，Kindle 上会显示异常）
 orientation: left
 
+# 可选：出网代理（仅 HTTP 代理，例如 v2ray / clash 的 http 入站）
+# NAS 直连不到 chatgpt.com 时用它；留空则不使用代理
+proxy:
+  url: ""            # 例："http://192.168.1.20:10809"（不支持 socks5://）
+  applyTo: [chatgpt] # 只对这些平台生效；删掉或留空数组则所有平台都走代理
+
 platforms:
   deepseek:
     enabled: true
@@ -20,11 +26,13 @@ platforms:
 
   chatgpt:
     enabled: true
-    # chatgpt.com 登录后，从浏览器 DevTools -> Application -> Cookies 复制完整 Cookie 字符串
-    # 过期后图片上会显示告警，重新复制替换即可
+    # 运行 `node tools/chatgpt-credential.js --real` 自动提取写入
     cookie: ""
 
   workbuddy:
     enabled: true
-    # 从 WorkBuddy 登录态中提取 Bearer token（见 README「凭证获取」）
-    token: ""
+    # Web 版 cookie 认证（推荐）：运行 `node tools/wb-credential.js` 自动登录提取，
+    # 或手动从浏览器复制整串 Cookie（需包含 httpOnly 的 session/session_2）
+    # userId 不填会自动从 /console/accounts 获取
+    cookie: ""
+    userId: ""

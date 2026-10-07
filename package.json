@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "sharp": "^0.33.5",
+    "undici": "^8.11.2",
     "yaml": "^2.5.0"
   }
 }

@@ -1,13 +1,21 @@
 const { withTimeout, fail } = require('./base');
+const { httpFetch } = require('../proxy');
 
 const ID = 'workbuddy';
 const NAME = 'WorkBuddy';
 
-// 接口来自 WorkBuddy 客户端源码（workbuddy-server / agent-ui）：
-//   POST {origin}/v2/billing/meter/get-user-resource-summary   （桌面端走 /v2 前缀 + Bearer token）
-// 返回 data.packages[]，每项含 cycleTotal / cycleRemain / cycleUsed / cycleResetTime / PackageCode。
+// 两种认证模式（二选一）：
+// A. cookie 模式（推荐）：Web 版同源接口，cookie + X-User-Id 认证
+//    POST {ORIGIN}/billing/meter/get-user-resource-summary
+//    userId 未配置时自动从 GET /console/accounts 取
+// B. token 模式：桌面客户端接口，Bearer token 认证
+//    POST {ORIGIN}/v2/billing/meter/get-user-resource-summary
+// 两者返回结构一致：data.Packages/packages[]，按 PackageCode 分类。
 const ORIGIN = 'https://www.workbuddy.cn';
-const PATH = '/v2/billing/meter/get-user-resource-summary';
+const WEB_PATH = '/billing/meter/get-user-resource-summary';
+const DESKTOP_PATH = '/v2/billing/meter/get-user-resource-summary';
+const ACCOUNTS_PATH = '/console/accounts';
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36';
 
 // 套餐基础积分（付费套餐 + 加购包）
 const PAID_CODES = [
@@ -37,7 +45,7 @@ const FREE_CODES = [
   'TCACA_code_037_WxOD3MpI2o', // bonusIntl
 ];
 
-// 字段命名在 summary / packages 两处略有差异，两种写法都兼容
+// 字段命名在 web/桌面两处接口略有差异，多种写法都兼容
 function pick(obj, keys) {
   for (const k of keys) {
     const v = obj[k];
@@ -66,31 +74,71 @@ function classify(pkg) {
   return null; // 未知编码
 }
 
+function post(url, headers, body = '{}') {
+  return withTimeout(
+    httpFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...headers }, body }, ID),
+    15000,
+    'WorkBuddy 额度查询'
+  );
+}
+
+async function resolveUserId(cookie) {
+  const res = await withTimeout(
+    httpFetch(`${ORIGIN}${ACCOUNTS_PATH}`, {
+      headers: { Cookie: cookie, 'User-Agent': UA, Referer: `${ORIGIN}/app`, Accept: 'application/json' },
+    }, ID),
+    15000,
+    'WorkBuddy 账户查询'
+  );
+  if (!res.ok) return null;
+  const json = await res.json().catch(() => null);
+  const accounts = json?.data?.accounts;
+  if (!Array.isArray(accounts) || accounts.length === 0) return null;
+  const cur = accounts.find((a) => a.lastLogin) || accounts[0];
+  return cur?.uid || null;
+}
+
 async function fetchQuota(cfg) {
+  const cookie = (cfg && cfg.cookie) || process.env.WORKBUDDY_COOKIE;
   const token = (cfg && cfg.token) || process.env.WORKBUDDY_TOKEN;
-  if (!token) return fail(ID, NAME, '未配置 token');
+
+  let headers;
+  let url;
+  if (cookie) {
+    // Web cookie 模式
+    let userId = (cfg && cfg.userId) || process.env.WORKBUDDY_USER_ID;
+    if (!userId) {
+      userId = await resolveUserId(cookie);
+      if (!userId) return fail(ID, NAME, 'cookie 已失效（无法获取用户 ID），需重新提取');
+    }
+    headers = {
+      Cookie: cookie,
+      'X-User-Id': userId,
+      'User-Agent': UA,
+      Origin: ORIGIN,
+      Referer: `${ORIGIN}/app`,
+    };
+    url = `${ORIGIN}${WEB_PATH}`;
+  } else if (token) {
+    // 桌面 Bearer 模式
+    headers = { Authorization: `Bearer ${token}`, 'Accept-Language': 'zh' };
+    url = `${ORIGIN}${DESKTOP_PATH}`;
+  } else {
+    return fail(ID, NAME, '未配置 cookie（web）或 token（桌面）');
+  }
 
   try {
-    const res = await withTimeout(
-      fetch(`${ORIGIN}${PATH}`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-          'Accept-Language': 'zh',
-        },
-        body: '{}',
-      }),
-      15000,
-      'WorkBuddy 额度查询'
-    );
-    if (res.status === 401 || res.status === 403) return fail(ID, NAME, 'token 已过期，需更新');
+    const res = await post(url, headers);
+    if (res.status === 401 || res.status === 403) {
+      return fail(ID, NAME, cookie ? 'cookie 已失效，需重新提取' : 'token 已过期，需更新');
+    }
     if (!res.ok) return fail(ID, NAME, `HTTP ${res.status}`);
 
     const json = await res.json();
     if (json && json.code !== 0) return fail(ID, NAME, `接口 code=${json.code} ${json.msg || ''}`.trim());
 
-    const packages = json?.data?.packages;
+    const data = json?.data || {};
+    const packages = data.Packages || data.packages;
     if (!Array.isArray(packages) || packages.length === 0) return fail(ID, NAME, '接口无额度数据');
 
     const groups = {
@@ -101,12 +149,12 @@ async function fetchQuota(cfg) {
 
     for (const p of packages) {
       const g = groups[classify(p) || 'unknown'];
-      const total = pick(p, ['cycleTotal', 'CycleTotal', 'CycleCapacity', 'CapacityTotal']) || 0;
-      const left = pick(p, ['cycleRemain', 'CycleRemain', 'CycleCapacityRemain', 'CapacityRemain']) || 0;
+      const total = pick(p, ['CycleTotalCapacity', 'cycleTotal', 'CycleTotal', 'CycleCapacity', 'CapacityTotal']) || 0;
+      const left = pick(p, ['CycleRemainCapacity', 'cycleRemain', 'CycleRemain', 'CycleCapacityRemain', 'CapacityRemain']) || 0;
       g.total += total > 0 ? total : 0;
       g.left += left > 0 ? left : 0;
       // 基础积分看周期重置时间，奖励积分看到期时间，取最近的一个
-      const t = pickTime(p, ['cycleResetTime', 'CycleResetTime', 'expireAt', 'ExpireAt', 'expireTime']);
+      const t = pickTime(p, ['cycleResetTime', 'CycleResetTime', 'ExpireTime', 'expireAt', 'ExpireAt', 'expireTime']);
       if (t && (g.resetAt === null || t < g.resetAt)) g.resetAt = t;
     }
 
@@ -136,6 +184,7 @@ async function fetchQuota(cfg) {
 
     const left = groups.base.left + groups.bonus.left + groups.unknown.left;
     const total = groups.base.total + groups.bonus.total + groups.unknown.total;
+    const plan = data.SubscriptionPackageName || '';
 
     return {
       id: ID, name: NAME, ok: true,
@@ -143,7 +192,7 @@ async function fetchQuota(cfg) {
       percent: total > 0 ? Math.round((left / total) * 100) : null,
       resetAt: groups.base.resetAt,
       metrics,
-      detail: `周期总额 ${Math.round(total)}`,
+      detail: [plan, total > 0 ? `周期总额 ${Math.round(total)}` : ''].filter(Boolean).join(' · '),
       error: null,
     };
   } catch (e) {

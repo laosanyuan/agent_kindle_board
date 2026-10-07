@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const config = require('./config').load();
 const { collectAll } = require('./providers');
 const stale = require('./stale');
+require('./proxy').initProxy(config);
 const { renderBoard } = require('./render/render');
 
 const renderOpts = {

@@ -1,49 +1,80 @@
 const { withTimeout, fail } = require('./base');
+const { httpFetch } = require('../proxy');
 
 const ID = 'chatgpt';
 const NAME = 'ChatGPT';
 
-// ChatGPT Plus/Pro 订阅额度无公开 API。
-// 方案：浏览器 Cookie → /api/auth/session 取 accessToken → 内部接口取窗口额度。
-// 内部接口结构未文档化，三种已知形态都做兼容解析（见 parseMetrics）。
+const SESSION_URL = 'https://chatgpt.com/api/auth/session';
+// Cloudflare 会拦默认 UA 的机器请求，需伪装成浏览器（与提取 cookie 的浏览器一致）
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36';
+const BROWSER_HEADERS = {
+  'User-Agent': UA,
+  Accept: 'application/json',
+  'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+  Referer: 'https://chatgpt.com/',
+  Origin: 'https://chatgpt.com',
+};
+// 2026-10 实测：只有 /backend-api/wham/usage 有效，
+// /backend-api/rate_limits 与 /backend-api/conversation_limit 均已返回 404（保留作兜底）。
+const USAGE_URLS = [
+  'https://chatgpt.com/backend-api/wham/usage',
+  'https://chatgpt.com/backend-api/rate_limits',
+  'https://chatgpt.com/backend-api/conversation_limit',
+];
+
+/**
+ * ChatGPT Plus/Pro 订阅额度无公开 API。
+ * 方案：浏览器 Cookie → /api/auth/session 取 accessToken → /backend-api/wham/usage 取窗口额度。
+ * wham/usage 返回形如：
+ *   { plan_type: "plus", rate_limit: { primary_window: {used_percent,reset_at,limit_window_seconds},
+ *                                      secondary_window: {...} } }
+ */
 async function fetchQuota(cfg) {
   const cookie = (cfg && cfg.cookie) || process.env.CHATGPT_COOKIE;
   if (!cookie) return fail(ID, NAME, '未配置 cookie');
 
   try {
+    // 1) 用 cookie 换 accessToken；拿不到也不算失败，继续用 cookie 直接打接口
+    let token = null;
     const sessionRes = await withTimeout(
-      fetch('https://chatgpt.com/api/auth/session', {
-        headers: { Cookie: cookie, Accept: 'application/json' },
-      }),
+      httpFetch(SESSION_URL, {
+        headers: { ...BROWSER_HEADERS, Cookie: cookie },
+      }, ID),
       15000,
       'ChatGPT 会话获取'
     );
-    if (sessionRes.status === 401 || sessionRes.status === 403) {
-      return fail(ID, NAME, 'Cookie 已过期，需更新');
+    if (sessionRes.ok) {
+      const session = await sessionRes.json().catch(() => null);
+      token = (session && session.accessToken) || null;
     }
-    if (!sessionRes.ok) return fail(ID, NAME, `会话接口 HTTP ${sessionRes.status}`);
 
-    const session = await sessionRes.json();
-    const token = session && session.accessToken;
-    if (!token) return fail(ID, NAME, '未拿到 accessToken（Cookie 可能失效）');
+    // 2) 取额度：token 与 cookie 都带上，任一可用即可
+    const headers = { ...BROWSER_HEADERS, Cookie: cookie };
+    if (token) headers.Authorization = `Bearer ${token}`;
 
-    const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
-
-    // 优先 /backend-api/rate_limits，失败回退 conversation_limit
     let payload = null;
     let lastStatus = null;
-    for (const url of [
-      'https://chatgpt.com/backend-api/rate_limits',
-      'https://chatgpt.com/backend-api/conversation_limit',
-    ]) {
-      const res = await withTimeout(fetch(url, { headers }), 15000, 'ChatGPT 额度查询');
-      if (!res.ok) { lastStatus = res.status; continue; }
-      const body = await res.json();
-      // 空对象视为无效，继续尝试下一个接口
-      if (body && typeof body === 'object' && Object.keys(body).length > 0) {
-        payload = body;
-        break;
+    let lastBody = '';
+    for (const url of USAGE_URLS) {
+      const res = await withTimeout(httpFetch(url, { headers }, ID), 15000, 'ChatGPT 额度查询');
+      if (!res.ok) {
+        lastStatus = res.status;
+        lastBody = (await res.text().catch(() => '')).slice(0, 500);
+        continue;
       }
+      const body = await res.json().catch(() => null);
+      if (body && typeof body === 'object' && Object.keys(body).length > 0) { payload = body; break; }
+    }
+    if (lastStatus === 401) {
+      return fail(ID, NAME, 'Cookie 已过期，需更新');
+    }
+    if (lastStatus === 403) {
+      // Cloudflare 拦截返回 403 + HTML 页；真未授权是 401 + JSON
+      const isChallenge = /<html|cf-mitigated|just a moment|challenge/i.test(lastBody);
+      if (isChallenge) {
+        return fail(ID, NAME, '被 Cloudflare 拦截：服务端需能访问 chatgpt.com（配代理出口）');
+      }
+      return fail(ID, NAME, 'Cookie 已过期，需更新');
     }
     if (!payload) {
       return fail(ID, NAME, lastStatus ? `额度接口 HTTP ${lastStatus}（接口可能已变化）` : '额度接口返回为空');
@@ -54,6 +85,8 @@ async function fetchQuota(cfg) {
 
     // 主数字取剩余最少（最紧急）的那个窗口
     const tightest = metrics.reduce((a, b) => (a.percent <= b.percent ? a : b));
+    const plan = payload.plan_type ? String(payload.plan_type) : null;
+    const planText = plan ? { plus: 'Plus', pro: 'Pro', free: 'Free', team: 'Team' }[plan.toLowerCase()] || plan : '订阅';
 
     return {
       id: ID, name: NAME, ok: true,
@@ -61,7 +94,7 @@ async function fetchQuota(cfg) {
       percent: tightest.percent,
       resetAt: tightest.resetAt,
       metrics,
-      detail: 'Plus 订阅窗口额度',
+      detail: `${planText} · 窗口额度`,
       error: null,
     };
   } catch (e) {
@@ -81,7 +114,7 @@ function normalizeReset(v) {
   if (typeof v !== 'number' || !Number.isFinite(v)) return null;
   if (v > 1e12) return v;              // 毫秒时间戳
   if (v > 1e9) return v * 1000;        // 秒时间戳
-  return Date.now() + v * 1000;        // 剩余秒数
+  return Date.now() + v * 1000;        // 剩余秒数（reset_after_seconds）
 }
 
 function labelForWindow(seconds) {
@@ -92,59 +125,55 @@ function labelForWindow(seconds) {
   return `${Math.round(seconds / 3600)} 小时`;
 }
 
-// 兼容三种已知返回形态
+// 从窗口对象里取 {percent, resetAt, label}
+function windowToMetric(w) {
+  if (!w || typeof w !== 'object') return null;
+  let percent = null;
+  if (typeof w.remaining_percent === 'number') percent = w.remaining_percent;
+  else if (typeof w.used_percent === 'number') percent = 100 - w.used_percent;
+  else if (typeof w.remaining === 'number' && typeof w.limit === 'number' && w.limit > 0) {
+    percent = (w.remaining / w.limit) * 100;
+  }
+  if (percent == null) return null;
+  return {
+    label: labelForWindow(w.limit_window_seconds),
+    percent: Math.round(Math.max(0, Math.min(100, percent))),
+    resetAt: normalizeReset(w.reset_at ?? w.reset_after_seconds),
+  };
+}
+
+// 兼容已知返回形态
 function parseMetrics(payload) {
   const metrics = [];
 
-  // 形态 A：primary_window / secondary_window（used_percent + reset_at + limit_window_seconds）
+  // 形态 A（当前真实）：rate_limit.primary_window / secondary_window
+  const root = payload.rate_limit && typeof payload.rate_limit === 'object' ? payload.rate_limit : payload;
   for (const key of ['primary_window', 'secondary_window']) {
-    const w = payload[key];
-    if (!w || typeof w !== 'object') continue;
-    let percent = null;
-    if (typeof w.remaining_percent === 'number') percent = w.remaining_percent;
-    else if (typeof w.used_percent === 'number') percent = 100 - w.used_percent;
-    else if (typeof w.remaining === 'number' && typeof w.limit === 'number' && w.limit > 0) {
-      percent = (w.remaining / w.limit) * 100;
-    }
-    if (percent == null) continue;
-    metrics.push({
-      label: labelForWindow(w.limit_window_seconds),
-      percent: Math.round(Math.max(0, Math.min(100, percent))),
-      resetAt: normalizeReset(w.reset_at),
-    });
+    const m = windowToMetric(root[key]);
+    if (m) metrics.push(m);
   }
   if (metrics.length) return metrics;
 
   // 形态 B：rate_limits 数组
-  if (Array.isArray(payload.rate_limits)) {
-    for (const item of payload.rate_limits) {
-      let percent = null;
-      if (typeof item.remaining_percent === 'number') percent = item.remaining_percent;
-      else if (typeof item.usage === 'number') percent = (1 - item.usage) * 100;
-      else if (typeof item.remaining === 'number' && typeof item.limit === 'number' && item.limit > 0) {
-        percent = (item.remaining / item.limit) * 100;
-      }
-      if (percent == null) continue;
-      metrics.push({
-        label: labelForWindow(item.limit_window_seconds) || item.name || '额度',
-        percent: Math.round(Math.max(0, Math.min(100, percent))),
-        resetAt: normalizeReset(item.reset_at ?? item.resets_at),
-      });
+  if (Array.isArray(root.rate_limits)) {
+    for (const item of root.rate_limits) {
+      const m = windowToMetric(item);
+      if (m) metrics.push({ ...m, label: m.label || item.name || '额度' });
     }
     if (metrics.length) return metrics;
   }
 
   // 形态 C：message_cap / messages_remaining（旧版 conversation_limit）
-  const cap = payload.message_cap ?? payload.conversation_limit?.message_cap;
-  const remaining = payload.messages_remaining ?? payload.conversation_limit?.messages_remaining;
+  const cap = root.message_cap ?? root.conversation_limit?.message_cap;
+  const remaining = root.messages_remaining ?? root.conversation_limit?.messages_remaining;
   if (typeof cap === 'number' && cap > 0 && typeof remaining === 'number') {
     metrics.push({
       label: '对话额度',
       percent: Math.round((remaining / cap) * 100),
-      resetAt: normalizeReset(payload.reset_at ?? payload.conversation_limit?.reset_at),
+      resetAt: normalizeReset(root.reset_at ?? root.conversation_limit?.reset_at),
     });
   }
   return metrics;
 }
 
-module.exports = { id: ID, name: NAME, fetchQuota };
+module.exports = { id: ID, name: NAME, fetchQuota, parseMetrics };
