@@ -3,6 +3,9 @@
 port: 8787
 intervalMinutes: 10
 
+# 采集失败后沿用上次成功值的最长时间（分钟），超过判定为真正失败
+staleMaxMinutes: 180
+
 # 面板时间所用时区（容器默认 UTC，不设会差 8 小时）
 timezone: Asia/Shanghai
 

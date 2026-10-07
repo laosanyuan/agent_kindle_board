@@ -1,6 +1,6 @@
 #!/bin/sh
 # Kindle (KPW1) 定时刷图脚本
-# 用法：scp 到 Kindle 的 /mnt/us/board.sh，开机自启见 kindle-ssh/boot.sh
+# 用法：scp 到 Kindle 的 /mnt/us/board.sh；开机自启由 install.sh 写入 /etc/upstart/board.conf
 #
 # ⚠️ 关键背景（2026-10-07 真机逐像素验证）：
 # 这台 KPW1(5.3.4) 的 eips 画 RGB(colortype 2) 或 >12KB 的 PNG 会输出拼贴花屏，
