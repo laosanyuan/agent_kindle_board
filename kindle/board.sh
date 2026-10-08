@@ -26,9 +26,17 @@ FORCE_EVERY=60     # 强制重画间隔（秒），必须短于 framework 首页
 # boot job 挂在 framework_ready 上，而 framework 每次唤醒/恢复都会重启并再次
 # 触发它 —— 不加防护的话每次唤醒都多起一个实例，多实例互相抢着写帧缓冲，
 # 画面就会出现「面板/首页/花屏轮流来」的灵异现象。
+self=$$
 for p in /proc/[0-9]*; do
-  [ "${p#/proc/}" = "$$" ] && continue
-  grep -qs "/mnt/us/board.sh" "$p/cmdline" && kill -9 "${p#/proc/}" 2>/dev/null
+  pid="${p#/proc/}"
+  [ "$pid" = "$self" ] && continue
+  grep -qs "/mnt/us/board.sh" "$p/cmdline" || continue
+  # 必须排除自己的子 shell：BusyBox ash 做命令替换 $(...) 时是 fork 而非 exec，
+  # 子进程的 cmdline 与父进程一模一样。不排除就会误杀自己的子进程，
+  # 表现为偶发的「etag 获取失败，跳过本轮」，也会让存活检测数出 2 个实例。
+  ppid=$(sed 's/^.*) //' "$p/stat" 2>/dev/null | awk '{print $2}')
+  [ "$ppid" = "$self" ] && continue
+  kill -9 "$pid" 2>/dev/null
 done
 mkdir -p "$OUTDIR"
 
@@ -41,8 +49,12 @@ mkdir -p "$OUTDIR"
 /sbin/stop pillow 2>/dev/null
 /sbin/stop framework 2>/dev/null
 
+# preventScreenSaver 保证屏幕不被固件休眠（面板要一直显示内容）；
+# flIntensity=0 是前光（背光）亮度，0 = 全关，纯靠环境光看，省电且不刺眼。
+# 每轮循环都设一次：系统或残留 UI 有可能把它改回去。
 keep_awake() {
   lipc-set-prop com.lab126.powerd preventScreenSaver 1 >/dev/null 2>&1
+  lipc-set-prop com.lab126.powerd flIntensity 0 >/dev/null 2>&1
 }
 
 log() {

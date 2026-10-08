@@ -120,12 +120,20 @@ Kindle 原生系统 → 菜单 → 体验版浏览器 → 打开 `http://<NAS_IP
 
 1. 固件版本在「设置 → 设备信息」确认。KPW1 用 NiLuJe 的 `kindle-5.4-jailbreak`：包内 7 个文件放根目录 → 首页 → 菜单 → 设置 → 菜单 → 更新您的 Kindle，屏幕下方出现 `**** JAILBREAK ****` 即成功。细节以 MobileRead 原帖为准。
 2. 拿 SSH。这台机器 USBNetwork 安装包被固件拒绝（签名校验不过），实际走的是 bridge 包触发 emergency.sh 部署 dropbear，完整步骤见 `deploy/kindle-jailbreak/STEPS.md`。
-3. 传脚本（U 盘拷也行，注意 LF 换行）：
+3. 传脚本。USBNetwork 没装成，设备没有 sftp-server，`scp` 不可用，改用管道写文件：
    ```bash
-   scp kindle/board.sh kindle/install.sh root@<Kindle_IP>:/mnt/us/
+   ssh root@<Kindle_IP> "cat > /mnt/us/board.sh"   < kindle/board.sh
+   ssh root@<Kindle_IP> "cat > /mnt/us/install.sh" < kindle/install.sh
    ssh root@<Kindle_IP> 'sh /mnt/us/install.sh'
    ```
-   `install.sh` 会去掉 CRLF、写 `/etc/upstart/board.conf`（framework 起来后启动 + 异常退出自动拉起）、立刻启动并打日志到 `/mnt/us/board.log`。
+   自启链路是 `/etc/init/kindle-boot.conf`（emergency.sh 拿 root 时写进只读根分区的）→ `/mnt/us/kindle-ssh/boot.sh` → `board.sh`。根分区平时 ro 挂载，只有 `mntroot rw` 之后才能写 `/etc`。所以改完 `board.sh` 重新触发一次事件即可，不必动 `/etc`：
+   ```bash
+   # 第一步必须先停旧实例：boot.sh 末尾是 `board.sh &` + `wait`，board.sh 死循环不退出，
+   # kindle-boot job 就一直是 running，upstart 不会对已运行的 job 重复 exec，直接 emit 是空操作。
+   ssh root@<Kindle_IP> "PAT='boa''rd.sh'; for p in /proc/[0-9]*; do tr '\0' ' ' < \$p/cmdline | grep -q \"\$PAT\" && kill -9 \${p#/proc/}; done"
+   ssh root@<Kindle_IP> '/sbin/initctl emit framework_ready'   # 会顺带重启 sshd，连接断一下属正常
+   ```
+   确认生效看日志里有没有新的 `board.sh 启动` 行：`tail -5 /mnt/us/board.log`。这两步在 `install.sh` 里已经封装好，直接 `sh /mnt/us/install.sh` 即可。
 4. 横放。图片已是 758×1024 旋转版，直接写帧缓冲。
 
 常见问题：
@@ -136,7 +144,9 @@ Kindle 原生系统 → 菜单 → 体验版浏览器 → 打开 `http://<NAS_IP
 
 ### 刷新机制
 
-脚本每 30 秒取一次 `/api/etag` 与本地比对，数据变了才重新下载条带；没变则最多每 60 秒重画一次（条带已在本地，直接重画）。重画周期必须短于系统 UI 的重绘周期，否则画面会被盖掉。每 20 轮做一次全刷除残影。脚本循环重设 `powerd preventScreenSaver` 防止休眠。`eips -g` 刷新瞬间闪一下是全刷防残影，正常。
+脚本每 30 秒取一次 `/api/etag` 与本地比对，数据变了才重新下载条带；没变则最多每 60 秒重画一次（条带已在本地，直接重画）。重画周期必须短于系统 UI 的重绘周期，否则画面会被盖掉。每 20 轮做一次全刷除残影。
+
+每轮循环还会设两个电源属性：`preventScreenSaver=1` 防止固件休眠（面板要一直显示），`flIntensity=0` 关掉前光（背光，最大值 24）——纯靠环境光看，省电。想开背光就把 `board.sh` 里 `keep_awake()` 的 `flIntensity` 改成想要的值（0~24）。`eips -g` 刷新瞬间闪一下是全刷防残影，正常。
 
 ### 真机踩过的坑（改代码前必读）
 
