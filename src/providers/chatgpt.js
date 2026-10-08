@@ -94,7 +94,8 @@ async function fetchQuota(cfg) {
       percent: tightest.percent,
       resetAt: tightest.resetAt,
       metrics,
-      detail: `${planText} · 窗口额度`,
+      extra: parseResetCredits(payload),
+      detail: `${planText} 订阅`,
       error: null,
     };
   } catch (e) {
@@ -123,6 +124,14 @@ function labelForWindow(seconds) {
   if (seconds >= 6 * 24 * 3600) return '周额度';
   if (seconds >= 24 * 3600) return '日额度';
   return `${Math.round(seconds / 3600)} 小时`;
+}
+
+// 额度重置次数：wham/usage 的 rate_limit_reset_credits.available_count
+// （能在 5 小时窗口额度用尽时手动重置的剩余次数；旧账号 / Free 可能整段缺失）
+function parseResetCredits(payload) {
+  const rc = payload && payload.rate_limit_reset_credits;
+  if (!rc || typeof rc.available_count !== 'number') return null;
+  return `可重置 ${Math.max(0, Math.trunc(rc.available_count))} 次`;
 }
 
 // 从窗口对象里取 {percent, resetAt, label}

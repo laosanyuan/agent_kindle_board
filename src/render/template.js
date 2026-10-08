@@ -45,11 +45,6 @@ function timeParts(ts, tz) {
   return p;
 }
 
-function fmtTime(ts, tz) {
-  const p = timeParts(ts, tz);
-  return `${p.hour}:${p.minute}`;
-}
-
 function fmtDateTime(ts, tz) {
   const p = timeParts(ts, tz);
   return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}`;
@@ -99,9 +94,9 @@ function metricRow(m, x, y, w, now, tz) {
 }
 
 // 大数字 + 单位，按可用宽度自动缩字号（墨水屏：字重拉满到 700/800）
-function bigNumber(value, unit, cx, y, maxWidth) {
+function bigNumber(value, unit, cx, y, maxWidth, size0 = 60) {
   const unitSize0 = unit && unit.length > 3 ? 16 : 24;
-  let size = 60;
+  let size = size0;
   let unitSize = unitSize0;
   const w0 = textWidth(value, size) + (unit ? textWidth(' ' + unit, unitSize) : 0);
   if (w0 > maxWidth) {
@@ -127,30 +122,33 @@ ${r.ok ? (r.stale ? `<circle cx="${x + pad + 71}" cy="${y + 66}" r="4.5" fill="n
 <text x="${x + pad + 81}" y="${y + 71}" font-size="14" font-weight="500" fill="${r.stale ? '#111' : '#444'}">${r.ok ? (r.stale ? `陈旧 ${r.staleMinutes} 分钟` : '正常') : '异常'}</text>
 <line x1="${x + pad}" y1="${y + 94}" x2="${x + w - pad}" y2="${y + 94}" stroke="#888" stroke-width="2"/>`;
 
-  // 大数字区
-  if (r.ok) {
-    out += bigNumber(r.big, r.unit, cx, y + 190, inner);
-  } else {
-    out += `<text x="${cx}" y="${y + 190}" text-anchor="middle" font-size="60" font-weight="700" fill="#666">--</text>`;
-  }
-  out += `<text x="${cx}" y="${y + 221}" text-anchor="middle" font-size="15" font-weight="500" fill="#333">${esc(fit(r.sub, inner, 15))}</text>`;
+  // 三张卡片的大数字必须横向对齐，所以头部（大数字 + 副标题）走固定基线，不参与居中。
+  // 下方内容（窗口行 / 徽章 / 补充）在剩余空间内垂直居中：内容少的卡片留白均分到上下，
+  // 既不会在底部堆出空白，也不会让大数字错位。
+  const top = y + 106;
+  const bottom = y + h - 18;
+  const bigSize = 68;
+  const step = hasMetrics ? 86 : 0;
+  const subGap = 34;   // 大数字基线 → 副标题基线
+  const headGap = 26;  // 副标题 → 下方内容
+  const badgeH = r.extra ? 38 : 0;
+  const detailH = r.detail ? 28 : 0;
+  const plainH = hasMetrics ? 0 : 58; // 无额度条时：「按量计费」一行 + 补充一行
+  const lowerH = metrics.length * step + badgeH + detailH + plainH;
 
-  if (hasMetrics) {
-    // 窗口额度行（ChatGPT 的 5 小时 / 周额度等），最多 3 行，行距按剩余高度自适应
-    const top = y + 256;
-    const avail = h - 24 - 8 - 256;
-    const step = Math.min(80, Math.floor(avail / metrics.length));
-    let my = top;
-    for (const m of metrics) {
-      out += metricRow(m, x + pad, my, inner, now, tz);
-      my += step;
-    }
-  } else if (r.ok) {
-    out += `<text x="${cx}" y="${y + 263}" text-anchor="middle" font-size="15" font-weight="500" fill="#333">${esc(fit('按量计费 · 无总额上限', inner, 15))}</text>`;
-    if (r.detail) {
-      out += `<text x="${cx}" y="${y + 293}" text-anchor="middle" font-size="14" fill="#555">${esc(fit(r.detail, inner, 14))}</text>`;
-    }
+  const bigBase = top + bigSize;
+  const subBase = bigBase + subGap;
+  const contentTop = subBase + headGap;
+  let cy = contentTop + Math.max(0, (bottom - contentTop - lowerH) / 2);
+
+  if (r.ok) {
+    out += bigNumber(r.big, r.unit, cx, bigBase, inner, bigSize);
   } else {
+    out += `<text x="${cx}" y="${bigBase}" text-anchor="middle" font-size="60" font-weight="700" fill="#666">--</text>`;
+  }
+  out += `<text x="${cx}" y="${subBase}" text-anchor="middle" font-size="15" font-weight="500" fill="#333">${esc(fit(r.sub, inner, 15))}</text>`;
+
+  if (!r.ok) {
     // 失败态：原因最多两行，按宽度截断
     const reason = String(r.error || '未知原因');
     const lines = [];
@@ -160,58 +158,69 @@ ${r.ok ? (r.stale ? `<circle cx="${x + pad + 71}" cy="${y + 66}" r="4.5" fill="n
       if (piece === rest) { lines.push(piece); rest = ''; }
       else { lines.push(piece); rest = rest.slice(piece.length - 1); }
     }
-    out += warnIcon(x + pad, y + 250);
-    out += `<text x="${x + pad + 24}" y="${y + 263}" font-size="14" font-weight="700" fill="#111">采集失败</text>`;
+    out += warnIcon(x + pad, cy - 13);
+    out += `<text x="${x + pad + 24}" y="${cy}" font-size="14" font-weight="700" fill="#111">采集失败</text>`;
     lines.forEach((ln, i) => {
-      out += `<text x="${x + pad}" y="${y + 292 + i * 22}" font-size="14" fill="#444">${esc(ln)}</text>`;
+      out += `<text x="${x + pad}" y="${cy + 29 + i * 22}" font-size="14" fill="#444">${esc(ln)}</text>`;
     });
+    out += '</g>';
+    return out;
   }
 
-  const footY = y + h - 24;
-  out += `<text x="${x + pad}" y="${footY}" font-size="13" fill="#555">采集于 ${fmtTime(now, tz)}</text>`;
-  if (hasMetrics && r.detail) {
-    const timeW = textWidth(`采集于 ${fmtTime(now, tz)}`, 13) + 12;
-    out += `<text x="${x + w - pad}" y="${footY}" text-anchor="end" font-size="13" fill="#555">${esc(fit(r.detail, inner - timeW, 13))}</text>`;
+  if (hasMetrics) {
+    for (const m of metrics) {
+      out += metricRow(m, x + pad, cy, inner, now, tz);
+      cy += step;
+    }
+  } else {
+    out += `<text x="${cx}" y="${cy}" text-anchor="middle" font-size="15" font-weight="500" fill="#333">${esc(fit('按量计费 · 无总额上限', inner, 15))}</text>`;
+    cy += 30;
+  }
+
+  // 附加徽章（如 ChatGPT 的额度重置次数）：白底深描边，墨水屏上比浅灰块清楚
+  if (r.extra) {
+    const badge = String(r.extra);
+    const bw = Math.min(inner, textWidth(badge, 15) + 24);
+    out += `<rect x="${x + pad}" y="${cy - 2}" width="${bw}" height="30" rx="8" fill="#ffffff" stroke="#333" stroke-width="2"/>`;
+    out += `<text x="${x + pad + 12}" y="${cy + 19}" font-size="15" font-weight="600" fill="#111">${esc(fit(badge, bw - 20, 15))}</text>`;
+    cy += badgeH;
+  }
+
+  if (r.detail) {
+    out += `<text x="${cx}" y="${cy + 4}" text-anchor="middle" font-size="14" fill="#444">${esc(fit(r.detail, inner, 14))}</text>`;
   }
   out += '</g>';
   return out;
 }
 
 function buildSVG(results, now, opts = {}) {
-  const { orientation = 'left', timezone = 'Asia/Shanghai', intervalMinutes = 10 } = opts;
+  const { orientation = 'left', timezone = 'Asia/Shanghai' } = opts;
   const margin = 32;
   const gap = 24;
   const cardY = 86;
-  const cardH = 500;
   const cols = Math.max(1, Math.min(results.length || 1, 4));
   const cardW = (CW - margin * 2 - gap * (cols - 1)) / cols;
 
-  const okCount = results.filter((r) => r.ok && !r.stale).length;
-  const staleCount = results.filter((r) => r.stale).length;
   const alerts = results.filter((r) => !r.ok || r.stale);
+  // 无异常时卡片占满整页高度（采集时间与状态汇总都省掉了，空间全给额度数据）；
+  // 有异常才在底部让出一行告警。
+  const cardH = CH - margin - cardY - (alerts.length ? 60 : 0);
 
   let body = '';
   results.forEach((r, i) => {
     body += card(r, margin + i * (cardW + gap), cardY, cardW, cardH, now, timezone);
   });
 
-  const footerLine = `<line x1="${margin}" y1="622" x2="${CW - margin}" y2="622" stroke="#777" stroke-width="2"/>`;
-  const leftFoot = `每 ${intervalMinutes} 分钟采集 · 最后更新 ${fmtDateTime(now, timezone)}`;
-  const rightFoot = `agent-kindle-board · ${okCount}/${results.length} 正常${staleCount ? ` · ${staleCount} 陈旧` : ''}`;
-
-  let footer = `${footerLine}
-<text x="${margin}" y="656" font-size="15" font-weight="500" fill="#333">${esc(leftFoot)}</text>
-<text x="${CW - margin}" y="656" text-anchor="end" font-size="14" fill="#555">${esc(rightFoot)}</text>`;
-
+  // 底部只在有异常时出现，页面右上角已有更新时间，不再重复
+  let footer = '';
   if (alerts.length > 0) {
     // 陈旧用「沿用 N 分钟前的数值」表述，失败用真实原因
     const msg = alerts
       .map((a) => (a.stale ? `${a.name}: 沿用 ${a.staleMinutes} 分钟前的数值` : `${a.name}: ${a.error}`))
       .join('；');
-    footer += warnIcon(margin, 674);
-    footer += `<text x="${margin + 26}" y="688" font-size="15" font-weight="500" fill="#111">${esc(fit(msg, CW - margin * 2 - 26, 15))}</text>`;
-  } else {
-    footer += `<text x="${margin}" y="688" font-size="14" fill="#555">所有平台运行正常</text>`;
+    const ay = cardY + cardH + 40;
+    footer += warnIcon(margin, ay - 14);
+    footer += `<text x="${margin + 26}" y="${ay}" font-size="15" font-weight="500" fill="#111">${esc(fit(msg, CW - margin * 2 - 26, 15))}</text>`;
   }
 
   const content = `<text x="${margin}" y="51" font-size="30" font-weight="700" fill="#000">AI 额度监控</text>

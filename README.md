@@ -9,7 +9,7 @@
 三张卡片互相独立，一个平台失败只影响自己的卡片：
 
 - DeepSeek：API 账户余额（¥），按量计费
-- ChatGPT：Plus 订阅的 5 小时窗口与周额度，各一条进度条、各自倒计时
+- ChatGPT：Plus 订阅的 5 小时窗口与周额度，各一条进度条、各自倒计时；卡片下方显示「可重置 N 次」（`rate_limit_reset_credits.available_count`，窗口额度耗尽后可手动重置的剩余次数）
 - WorkBuddy：套餐基础积分与平台奖励积分分开显示，大数字为合计剩余
 
 ## 快速开始

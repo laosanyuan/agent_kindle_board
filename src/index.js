@@ -29,6 +29,7 @@ function dataHash(results) {
     id: r.id, ok: r.ok, big: r.big, unit: r.unit, sub: r.sub,
     percent: r.percent, detail: r.detail, stale: !!r.stale,
     metrics: (r.metrics || []).map((m) => [m.label, m.percent]),
+    extra: r.extra || null, // 重置次数变了也要触发刷屏
   }));
   return crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex').slice(0, 16);
 }

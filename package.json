@@ -1,6 +1,6 @@
 {
   "name": "agent-kindle-board",
-  "version": "0.1.8",
+  "version": "0.1.11",
   "private": true,
   "description": "AI agent quota monitor rendered as an e-ink friendly image for Kindle",
   "main": "src/index.js",

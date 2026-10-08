@@ -40,7 +40,8 @@ function mockQuota(id, name) {
         { label: '5 小时', percent: 48, resetAt: now + (2 * 60 + 41) * 60000 },
         { label: '周额度', percent: 76, resetAt: now + (3 * 24 + 5) * 3600 * 1000 },
       ],
-      detail: 'Plus 订阅窗口额度', error: null,
+      extra: '可重置 2 次',
+      detail: 'Plus 订阅', error: null,
     };
     return process.env.MOCK_STALE === '1' ? { ...m, stale: true, staleMinutes: 12 } : m;
   }
