@@ -126,7 +126,11 @@ Kindle 原生系统 → 菜单 → 体验版浏览器 → 打开 `http://<NAS_IP
    ssh root@<Kindle_IP> "cat > /mnt/us/install.sh" < kindle/install.sh
    ssh root@<Kindle_IP> 'sh /mnt/us/install.sh'
    ```
-   自启链路是 `/etc/init/kindle-boot.conf`（emergency.sh 拿 root 时写进只读根分区的）→ `/mnt/us/kindle-ssh/boot.sh` → `board.sh`。根分区平时 ro 挂载，只有 `mntroot rw` 之后才能写 `/etc`。所以改完 `board.sh` 重新触发一次事件即可，不必动 `/etc`：
+   自启链路是 `/etc/init/kindle-boot.conf`（emergency.sh 拿 root 时写进只读根分区的）→ `/var/local/kssh/boot.sh` → `/var/local/kssh/board.sh`。根分区平时 ro 挂载，只有 `mntroot rw` 之后才能写 `/etc`。所以改完 `board.sh` 重新触发一次事件即可，不必动 `/etc`：
+
+   > **为什么运行体在 `/var/local/kssh` 而不是 `/mnt/us`**（2026-10-11 踩过）：插着 USB 线开机时，`/mnt/us` 会被整个导出给电脑（U 盘模式），设备侧既读不到脚本也写不进日志 —— 自启会**静默失败**，而且 U 盘模式下无线是关的，表现为「设备离线 + 面板停在旧画面 + `board.log` 断在插线那一刻」。所以：脚本源文件放 `/mnt/us`（方便从电脑改），`boot.sh` 开机时单向同步到 `/var/local/kssh`，运行体、日志、状态文件一律在 `/var/local`（持久、不参与导出），日志再镜像一份回 `/mnt/us/board.log` 方便插电脑看。
+   >
+   > 推论：**长期挂机时用充电头供电，不要插电脑**，插电脑会让无线断掉、面板停更。
    ```bash
    # 第一步必须先停旧实例：boot.sh 末尾是 `board.sh &` + `wait`，board.sh 死循环不退出，
    # kindle-boot job 就一直是 running，upstart 不会对已运行的 job 重复 exec，直接 emit 是空操作。
@@ -146,14 +150,32 @@ Kindle 原生系统 → 菜单 → 体验版浏览器 → 打开 `http://<NAS_IP
 
 脚本每 30 秒取一次 `/api/etag` 与本地比对，数据变了才重新下载条带；没变则最多每 60 秒重画一次（条带已在本地，直接重画）。重画周期必须短于系统 UI 的重绘周期，否则画面会被盖掉。每 20 轮做一次全刷除残影。
 
-每轮循环还会设两个电源属性：`preventScreenSaver=1` 防止固件休眠（面板要一直显示），`flIntensity=0` 关掉前光（背光，最大值 24）——纯靠环境光看，省电。想开背光就把 `board.sh` 里 `keep_awake()` 的 `flIntensity` 改成想要的值（0~24）。`eips -g` 刷新瞬间闪一下是全刷防残影，正常。
+每轮循环还会管两件事（`keep_awake()`）：
+
+- `preventScreenSaver=1` 防止固件休眠（面板要一直显示内容）
+- **关前光**。这一条有坑，见下。
+
+> **KPW1 的前光没有「0 = 熄灭」这回事**（2026-10-11 实测定论）。
+> `lipc-set-prop com.lab126.powerd flIntensity 0` 落到驱动层其实是 **1 档**：
+> 读 `/sys/devices/system/fl_tps6116x/fl_tps6116x0/fl_intensity` 会看到 `FrontLight(Intensity) = 1`，
+> LED 依旧极微亮（社区早知：滑块拉到 0 灯还是亮的，只有休眠才真灭）。
+> 真正熄灭要把 `0` 直接写进那个 `fl_intensity` 节点，所以 `board.sh` 每轮先设 `flIntensity 0`
+> （保持 powerd 内部状态是最暗档，免得休眠恢复时弹回高亮），**等 1 秒**再把 `FL_LEVEL`（默认 0）
+> 压进节点 —— 顺序不能反，反了会被 powerd 后写的「1 档」覆盖。
+> 想恢复前光：把 `board.sh` 顶部的 `FL_LEVEL` 改成 `1`（厂固件的最暗档）或 `1~24` 的值。
+
+`eips -g` 刷新瞬间闪一下是全刷防残影，正常。
 
 ### 真机踩过的坑（改代码前必读）
 
 - `eips` 只认 12KB 以内的灰度（colortype 0）PNG，别改回整图直刷（见上文接口一节）
 - 这台机器的 BusyBox `ps` 列不全进程，判断 board.sh 是否活着要扫 `/proc/*/cmdline`；杀进程时注意别把命令行里含同名关键字的自己 kill 掉（ssh 远程命令行也算）
 - 开机自启挂在 `framework_ready` 上，而 framework 每次唤醒/恢复都会再触发一次，不加防护会积累多个实例互相覆盖画面 —— `board.sh` 启动时的单实例防护不要删
+- **插着 USB 开机必瘫**（见上文 A/B 部署一节）：`/mnt/us` 被导出 → 脚本读不到、日志写不进、无线被关。自 2026-10-11 起运行体已挪到 `/var/local/kssh` 规避；但**排查/救援时**仍要记住这条 —— 设备「离线 + 画面不动 + 日志停在某一刻」时，先看是不是被人插着电脑
+- 设备侧的救援入口：`/mnt/us/emergency.sh`。越狱 bridge（`/etc/init/bridge.conf`）在 `framework_ready` 时会以 root 执行它，所以**往 U 盘丢一个 emergency.sh，再拔线/重启一次**就能重新部署 sshd 与 board（执行成功会自己改名 `emergency.sh.done`，避免每次开机重复跑）
+- 设备「离线」时的排查顺序：① 看电脑有没有多出 `KINDLE` 卷（有 = 活着但被 U 盘模式困住）；② `python tools/kindle-eject.py` 发底层 eject 让它自己退出（`mountvol <盘符>: /p` 往往只撤下存储、设备仍卡着，**最可靠还是物理拔线**）；③ 拔线后 framework 重启 → `framework_ready` → 自动部署；④ `python tools/_scan_kindle.py 5` 扫 88.x/100.x/15.x 网段的 22 端口找它（DHCP，IP 会变）
 - 墨水屏渲染准则（0.1.8 起）：细字重、浅灰、1px 线在 e-ink 上都发虚。字重一律 ≥600（标题和大数字 700）、灰阶文字不浅于 `#555`、线条 ≥2px、进度条用白底加深描边而不是浅灰槽。改模板别退回浅灰细线风格
+- **前光不像想象中好关**（见上文刷新机制一节）：`flIntensity 0` 只是驱动层的 1 档，真正熄灭要写 `/sys/devices/system/fl_tps6116x/fl_tps6116x0/fl_intensity`。排查时别被 `lipc-get-prop flIntensity` 返回 0 骗了
 
 ## 扩展新平台
 

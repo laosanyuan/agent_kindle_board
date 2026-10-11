@@ -1,6 +1,11 @@
 #!/bin/sh
 # Kindle (KPW1) 定时刷图脚本
-# 用法：scp 到 Kindle 的 /mnt/us/board.sh；开机自启由 install.sh 写入 /etc/upstart/board.conf
+# 源文件放 /mnt/us/board.sh（方便从电脑改）；boot.sh 会把它同步到 /var/local/kssh/board.sh 再运行。
+#
+# ★ 为什么运行体和状态文件都在 /var/local：
+#   /mnt/us 在「U 盘模式」（插着电脑）时会被整个导出给电脑，设备侧既看不到文件也写不进日志。
+#   脚本放那儿的话，插着 USB 开机 = 自启静默失败（2026-10-11 就是这么瘫的）。
+#   持久分区 /var/local 不参与导出，永远可读写。
 #
 # ⚠️ 关键背景（2026-10-07 真机逐像素验证）：
 # 这台 KPW1(5.3.4) 的 eips 画 RGB(colortype 2) 或 >12KB 的 PNG 会输出拼贴花屏，
@@ -15,12 +20,32 @@ BASE="http://192.168.100.218:8787"
 BANDS=16
 BAND_H=64
 OUTDIR="/tmp/bands"        # 条带放 /tmp，避免频繁写 flash
-LOG="/mnt/us/board.log"
-ETAG_FILE="/mnt/us/board.etag"
-LAST_REFRESH_FILE="/mnt/us/board.ts"
-FULLCNT_FILE="/mnt/us/board.cnt"   # 局部刷新计数，每 20 轮做一次全刷除残影
+
+# 状态目录：优先 /var/local/kssh（U 盘模式下也能写），不可用再退回 /mnt/us
+STATE_DIR="/var/local/kssh"
+mkdir -p "$STATE_DIR" 2>/dev/null
+if ! touch "$STATE_DIR/.wtest" 2>/dev/null; then
+  STATE_DIR="/mnt/us"
+else
+  rm -f "$STATE_DIR/.wtest" 2>/dev/null
+fi
+LOG="$STATE_DIR/board.log"
+ETAG_FILE="$STATE_DIR/board.etag"
+LAST_REFRESH_FILE="$STATE_DIR/board.ts"
+FULLCNT_FILE="$STATE_DIR/board.cnt"   # 局部刷新计数，每 20 轮做一次全刷除残影
+MIRROR_LOG="/mnt/us/board.log"  # 顺带往 U 盘镜像一份，插电脑能直接看；写不进就算了
 CHECK=30           # 检查间隔（秒）
 FORCE_EVERY=60     # 强制重画间隔（秒），必须短于 framework 首页重绘周期
+
+# —— 前光（背光）控制 ————————————————————————————————
+# ★ 坑（2026-10-11 实测定论）：KPW1 上前光没有「0 = 熄灭」这回事。
+#   `lipc-set-prop com.lab126.powerd flIntensity 0` 落到驱动层是 **1 档**，
+#   LED 仍然极微亮（社区早知：滑块拉到 0，灯依旧微亮，只有休眠才真灭）。
+#   读值可见：cat $FL_NODE → "FrontLight(Intensity) = 1"。
+#   真正熄灭要把 0 直接写进 tps6116x 驱动的 fl_intensity 节点。
+#   注意：写 0 会让这台机器的前光彻底不亮，想恢复把 FL_LEVEL 改成 1（或删掉这行）。
+FL_NODE="/sys/devices/system/fl_tps6116x/fl_tps6116x0/fl_intensity"
+FL_LEVEL=0         # 0 = 真正熄灭；1 = 厂固件的「最暗档」（微亮）
 
 # —— 单实例保护 ——————————————————————————————————————
 # boot job 挂在 framework_ready 上，而 framework 每次唤醒/恢复都会重启并再次
@@ -30,7 +55,8 @@ self=$$
 for p in /proc/[0-9]*; do
   pid="${p#/proc/}"
   [ "$pid" = "$self" ] && continue
-  grep -qs "/mnt/us/board.sh" "$p/cmdline" || continue
+  # 匹配 /kssh/board.sh —— 不看前缀（/mnt/us 或 /var/local 都算），且不会误伤 install.sh
+  grep -qs "/kssh/board.sh" "$p/cmdline" || continue
   # 必须排除自己的子 shell：BusyBox ash 做命令替换 $(...) 时是 fork 而非 exec，
   # 子进程的 cmdline 与父进程一模一样。不排除就会误杀自己的子进程，
   # 表现为偶发的「etag 获取失败，跳过本轮」，也会让存活检测数出 2 个实例。
@@ -49,16 +75,23 @@ mkdir -p "$OUTDIR"
 /sbin/stop pillow 2>/dev/null
 /sbin/stop framework 2>/dev/null
 
-# preventScreenSaver 保证屏幕不被固件休眠（面板要一直显示内容）；
-# flIntensity=0 是前光（背光）亮度，0 = 全关，纯靠环境光看，省电且不刺眼。
-# 每轮循环都设一次：系统或残留 UI 有可能把它改回去。
+# preventScreenSaver 保证屏幕不被固件休眠（面板要一直显示内容）。
+# 前光每轮都压一次：① 先把 powerd 的档位设成 0（保持它内部状态是"最暗"，
+# 免得休眠恢复时弹回高亮）；② 再等 1 秒让 powerd 那一刀落到驱动，
+# 然后把真正的熄灭值写进 fl_intensity 节点。顺序不能反 ——
+# 反了的话 powerd 后写的「1 档」会把熄灭覆盖掉。
 keep_awake() {
   lipc-set-prop com.lab126.powerd preventScreenSaver 1 >/dev/null 2>&1
   lipc-set-prop com.lab126.powerd flIntensity 0 >/dev/null 2>&1
+  sleep 1
+  [ -w "$FL_NODE" ] && echo -n "$FL_LEVEL" > "$FL_NODE" 2>/dev/null
 }
 
 log() {
-  echo "$(date '+%F %T') $1" >> "$LOG"
+  msg="$(date '+%F %T') $1"
+  echo "$msg" >> "$LOG"
+  # 镜像到 U 盘（插电脑能直接看）。U 盘模式下 /mnt/us 不可见，写失败就忽略。
+  [ "$LOG" = "$MIRROR_LOG" ] || echo "$msg" >> "$MIRROR_LOG" 2>/dev/null
 }
 
 now_ts() {
