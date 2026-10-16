@@ -34,8 +34,16 @@ platforms:
 
   workbuddy:
     enabled: true
-    # Web 版 cookie 认证（推荐）：运行 `node tools/wb-credential.js` 自动登录提取，
-    # 或手动从浏览器复制整串 Cookie（需包含 httpOnly 的 session/session_2）
-    # userId 不填会自动从 /console/accounts 获取
+    # Web 版 cookie 认证。提取：`node tools/wb-credential.js`
+    #   工具自己维护一个独立副本 profile（%LOCALAPPDATA%\agent-kindle-board\wbprofile），
+    #   不占用你自己的 Chrome；首次登录一次即可。
+    # userId 不填会自动从 /console/accounts 获取。
+    # userAgent 由工具连同 cookie 一起提取 —— 网关按 UA 里的 Chrome 大版本校验，
+    #   版本对不上会直接 401（表现为"cookie 已失效"），所以别手改；
+    #   Chrome 大版本升级后重跑一次工具即可。
+    # 注：服务端 session 固定 7 天失效。日常无需干预：计划任务
+    #   agent-kindle-board-wb-refresh 每 10 分钟给 SSO 会话保温、临近到期自动静默续期
+    #   （`node tools/wb-credential.js --refresh --push`）。详见 README「凭证获取」。
     cookie: ""
     userId: ""
+    userAgent: ""

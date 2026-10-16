@@ -15,7 +15,12 @@ const ORIGIN = 'https://www.workbuddy.cn';
 const WEB_PATH = '/billing/meter/get-user-resource-summary';
 const DESKTOP_PATH = '/v2/billing/meter/get-user-resource-summary';
 const ACCOUNTS_PATH = '/console/accounts';
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36';
+// ⚠️ UA 里的 Chrome 大版本会被腾讯云网关校验，且要求与服务端预期**精确一致**：
+//    实测 Chrome/155 → 200，而 138 / 150 / 153 / 154 / 156 / 160 全部 401。
+//    所以 UA 必须跟着浏览器一起刷新 —— 正常走 config 里的 userAgent
+//    （wb-credential.js 提取 cookie 时会连 navigator.userAgent 一起写入）；
+//    下面这个常量只是兜底，Chrome 大版本升级后它就会失效。
+const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36';
 
 // 套餐基础积分（付费套餐 + 加购包）
 const PAID_CODES = [
@@ -82,10 +87,10 @@ function post(url, headers, body = '{}') {
   );
 }
 
-async function resolveUserId(cookie) {
+async function resolveUserId(cookie, ua) {
   const res = await withTimeout(
     httpFetch(`${ORIGIN}${ACCOUNTS_PATH}`, {
-      headers: { Cookie: cookie, 'User-Agent': UA, Referer: `${ORIGIN}/app`, Accept: 'application/json' },
+      headers: { Cookie: cookie, 'User-Agent': ua, Referer: `${ORIGIN}/app`, Accept: 'application/json' },
     }, ID),
     15000,
     'WorkBuddy 账户查询'
@@ -101,6 +106,8 @@ async function resolveUserId(cookie) {
 async function fetchQuota(cfg) {
   const cookie = (cfg && cfg.cookie) || process.env.WORKBUDDY_COOKIE;
   const token = (cfg && cfg.token) || process.env.WORKBUDDY_TOKEN;
+  // UA 必须与服务端预期的 Chrome 版本一致，否则网关直接 401（见文件顶部说明）
+  const ua = (cfg && cfg.userAgent) || process.env.WORKBUDDY_UA || DEFAULT_UA;
 
   let headers;
   let url;
@@ -108,13 +115,13 @@ async function fetchQuota(cfg) {
     // Web cookie 模式
     let userId = (cfg && cfg.userId) || process.env.WORKBUDDY_USER_ID;
     if (!userId) {
-      userId = await resolveUserId(cookie);
+      userId = await resolveUserId(cookie, ua);
       if (!userId) return fail(ID, NAME, 'cookie 已失效（无法获取用户 ID），需重新提取');
     }
     headers = {
       Cookie: cookie,
       'X-User-Id': userId,
-      'User-Agent': UA,
+      'User-Agent': ua,
       Origin: ORIGIN,
       Referer: `${ORIGIN}/app`,
     };

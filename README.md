@@ -25,7 +25,7 @@ NAS 拉不动 Docker Hub 时不用传镜像包，直接把源码传上去构建�
 ```bash
 tar czf build.tar.gz src assets Dockerfile package.json package-lock.json config.example.yaml
 # 拷到 NAS 解开后：
-docker build -t agent-kindle-board:0.1.8 <解包目录>
+docker build -t agent-kindle-board:0.1.12 <解包目录>
 docker compose up -d
 ```
 
@@ -57,13 +57,58 @@ Kindle 为什么拉条带而不是整图：KPW1（5.3.4 固件）的 `eips` 画 
 |---|---|---|
 | DeepSeek | platform.deepseek.com → API keys → 创建 | `platforms.deepseek.apiKey` |
 | ChatGPT | `node tools/chatgpt-credential.js --real`（先关掉所有 Chrome 窗口） | `platforms.chatgpt.cookie` |
-| WorkBuddy | `node tools/wb-credential.js`，浏览器里登录一次 | `platforms.workbuddy.cookie` + `userId` |
+| WorkBuddy | `node tools/wb-credential.js`（独立副本 profile，**不用关你自己的 Chrome**；配好后由计划任务自动续期） | `platforms.workbuddy.cookie` + `userId` + `userAgent` |
 
 几点说明：
 
 - ChatGPT 走 `chatgpt.com/api/auth/session` 换 accessToken，再打内部接口 `GET /backend-api/wham/usage`。只带 cookie 会 401，必须带 Bearer；`rate_limits`、`conversation_limit` 两个旧接口已 404 下线。`--real` 模式借用日常 Chrome 的登录态过 Cloudflare 人机验证（独立新 profile 会被 Turnstile 卡住），提取完自动清理；登录态过期就在弹出的窗口里重新登录一次。跑工具前清掉代理环境变量（见脚本头部注释）。
 - WorkBuddy 走 Web 版同源接口 `POST www.workbuddy.cn/billing/meter/get-user-resource-summary`，cookie + X-User-Id 认证。userId 不填会自动获取。两类积分按 `PackageCode` 区分，枚举表在 `src/providers/workbuddy.js` 顶部。
-- cookie 类凭证过期后重跑对应提取工具即可。
+- cookie 类凭证过期后重跑对应提取工具即可；WorkBuddy 见下一节，正常情况下不用管。
+
+### WorkBuddy 登录态自动续期
+
+`tools/wb-credential.js` 有四种跑法：
+
+```bash
+node tools/wb-credential.js                    # 提取；未登录则弹窗让你扫码一次
+node tools/wb-credential.js --refresh          # 非交互：SSO 保温 + 按需静默续期
+node tools/wb-credential.js --refresh --push   # 续期成功后同步 config.yaml 到 NAS 并重启容器
+node tools/wb-credential.js --force            # 忽略节流，强制走一次浏览器自检
+```
+
+已注册 Windows 计划任务 **`agent-kindle-board-wb-refresh`**（每 10 分钟 + 每次登录时），执行
+`wb-credential.js --refresh --push --auto-login`：
+
+- **每 10 分钟**：只发一个轻量 HTTP 请求给 Keycloak 的 SSO 会话「保温」（1 秒内完成，不开浏览器）。
+- **会话剩余不足 2 天时**：才真正启动一次无头 Chrome 走静默 OIDC，成功就写回 `config.yaml` 并推 NAS + 重启容器；最密每 6 小时试一次。
+- **静默续期失败时**：自动弹出登录窗口（每天最多一次）让你扫码；不想被弹窗打扰就把它当成提醒。
+
+管理命令：
+
+```powershell
+Get-ScheduledTaskInfo -TaskName agent-kindle-board-wb-refresh   # 看上次结果
+Start-ScheduledTask -TaskName agent-kindle-board-wb-refresh     # 立刻跑一次
+Unregister-ScheduledTask -TaskName agent-kindle-board-wb-refresh -Confirm:$false   # 不要了
+```
+
+日志在 `logs/wb-refresh.log`（256KB 自动轮转），状态在 `logs/wb-refresh.state.json`。
+两个环境前提：`npm i --no-save playwright-core`（自带 Chrome，不下载浏览器内核）；PATH 上有 `curl`。
+
+### 为什么 WorkBuddy 做不到「一次配置永久有效」
+
+排查过的路，记下来免得重复劳动：
+
+| 方案 | 结论 |
+|---|---|
+| 开放平台 Open API（`GET /openapi/v2/credit`） | 文档写着需要 `user.credit.readable`，但官方 scope 列表里**没有这个权限**（只有 `user.profile/contact.readable`、`user.credit.exchange`、`user.task.*`、`user.localassistant.*`），且应用创建后还要平台审核 |
+| 桌面客户端 token 模式 | 接口确实存在（`/v2/billing/meter/...`，Bearer 认证），但桌面端没装（`%APPDATA%\WorkBuddy` 空，只有 `%LOCALAPPDATA%\@genieworkbuddy-desktop-updater\installer.exe`）；且桌面端自己的 cookie 库 `~/.workbuddy/app/session/Network/Cookies` 是**无共享独占锁**，跑着的时候连读都读不出来，全盘也没搜到明文 token |
+| Keycloak 静默续期 | 链路是 APISIX 的 openid-connect 插件：`realm=copilot` `client_id=console` `scope="openid offline_access"`，回调 `/.apisix/redirect`。带着现有 cookie 打 `authorize?prompt=none` 直接回 `error=login_required` —— 需要 Keycloak 的 SSO 身份 cookie 还活着才换得到 code，这条路是「能用就用、不能用就退回人工」的机会主义方案 |
+| 让 cookie 自己「滑动」续期 | 不成立。`session` cookie 里就带着死线（值尾部 `\|<unix 秒>\|`，固定签发后 7 天），实测带着有效会话请求 `/app`、`/billing/...` 前后值完全不变；只有请求**不带**有效会话时网关才会发一个新的（那是匿名会话） |
+| 直接复用 Chrome 默认 profile 做自动化 | Chrome **136 起禁止在默认 profile 目录上开启远程调试**（防 cookie 窃取），playwright 会「启动即退出」；而且运行中的 profile 被独占锁定，连 cookie 库都复制不出来。解法就是副本 profile |
+
+会话失效时服务端（APISIX）会返回 401 并主动把 `session`/`session_2` 清掉，所以「过期」是硬失效，没有协商余地。
+
+⚠️ 改这个链路时必看的一条：**UA 里必须是不带 `HeadlessChrome` 的正常 Chrome UA**，且大版本要与服务端预期一致。无头 Chrome 默认 UA 会被网关直接拒，被拒后网关会给浏览器**下发一个匿名 `session`，把 profile 里的登录态冲掉** —— 表现为「明明没动什么，cookie 就失效了」。工具里已经用 `userAgent` 覆盖 + 先清空再注入 cookie 处理掉。
 
 ## 出网代理（ChatGPT 必备）
 
@@ -83,12 +128,13 @@ vmess/vless/trojan 订阅链接不能直接填——`proxy.url` 只认标准 HTT
 
 ```bash
 docker exec agent-kindle-board curl -s -o /dev/null -w '%{http_code}\n' \
-  -x http://xray:10809 -A "Mozilla/5.0" https://chatgpt.com/api/auth/session
+  -x http://xray:10809 --tlsv1.3 -A "Mozilla/5.0" https://chatgpt.com/api/auth/session
 ```
 
-两个容易踩的坑：
+三个容易踩的坑：
 
-- Cloudflare 按 TLS 指纹（JA3）拦机器请求。Node 自带 fetch 即使走代理也会被 403 challenge，curl 的指纹能过，所以配了代理的请求一律用 curl 发（镜像里已装 curl）。被拦时卡片会提示「被 Cloudflare 拦截」，别误判成 cookie 过期。
+- Cloudflare 按 TLS 指纹（JA3/JA4）拦机器请求。Node 自带 fetch 即使走代理也会被 403 challenge，curl 的指纹能过，所以配了代理的请求一律用 curl 发（镜像里已装 curl）。被拦时卡片会提示「被 Cloudflare 拦截」，别误判成 cookie 过期。
+- **本项目的 curl 请求固定加 `--tlsv1.3`（只宣告 TLS 1.3）**。镜像里是 OpenSSL 版 curl，默认 ClientHello 会同时宣告 TLS1.2 + TLS1.3，这个组合会被 Cloudflare 直接 403 challenge；改成只宣告 1.3 就稳定放行。2026-10-16 实测（同一出口 IP、同一 UA，各 8 次）：默认 `403×8`，加 `--tlsv1.3` 后 `200×8`。所以上面验证命令也要带这个参数，否则你会看到「代理是好的但一直 403」的假象。改法在 `src/proxy.js` 顶部的 `TLS_ARGS`。
 - `deploy/xray/config.json` 含节点 UUID，已在 `.gitignore` 中。当前节点是 ws 未开 TLS，流量特征明显，有条件建议换带 TLS 的。
 
 ## 配置
@@ -103,7 +149,7 @@ orientation: left           # Kindle 横放方向：顶部朝左 left / 朝右 r
 platforms:
   deepseek:  { enabled: true, apiKey: "" }
   chatgpt:   { enabled: true, cookie: "" }
-  workbuddy: { enabled: true, cookie: "", userId: "" }
+  workbuddy: { enabled: true, cookie: "", userId: "", userAgent: "" }
 ```
 
 环境变量可覆盖（设置后自动启用对应平台）：`PORT`、`DEEPSEEK_API_KEY`、`CHATGPT_COOKIE`、`WORKBUDDY_TOKEN`，另有 `MOCK=1`（假数据）和 `MOCK_STALE=1`（把 ChatGPT 标记为陈旧，验证降级排版）。`config.yaml` 已在 `.gitignore` 中，勿提交。

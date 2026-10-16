@@ -45,11 +45,21 @@ function hasCurl() {
   return curlOk;
 }
 
+// 只宣告 TLS 1.3。
+// 为什么：容器里是 OpenSSL 版 curl，默认 ClientHello 会同时宣告 TLS1.2 + TLS1.3，
+// Cloudflare 对这个指纹直接回 403 challenge（cf-mitigated: challenge）；
+// 改成「最低=最高=1.3」后稳定放行。2026-10-16 在 NAS 上实测：
+//   默认 → 403 403 403 403 403 403 403 403
+//   --tlsv1.3 → 200 200 200 200 200 200 200 200
+// 走代理的目标目前只有 chatgpt.com，支持 TLS1.3；若将来要代理不支持 1.3 的站点，
+// 把下面这行改成空数组即可。
+const TLS_ARGS = ['--tlsv1.3'];
+
 // curl 请求，返回最小 Response 兼容对象（ok/status/text()/json()）
 function curlRequest(url, opts, proxy, timeoutMs) {
   return new Promise((resolve, reject) => {
     const args = ['-s', '-S', '--compressed', '--max-time', String(Math.ceil(timeoutMs / 1000)),
-      '-w', '\n%{http_code}'];
+      ...TLS_ARGS, '-w', '\n%{http_code}'];
     if (proxy) args.push('-x', proxy);
     const method = String(opts.method || 'GET').toUpperCase();
     if (method !== 'GET') args.push('-X', method);

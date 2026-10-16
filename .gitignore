@@ -19,6 +19,8 @@ outputs/
 .sync.out
 .usb2.log
 kindle_ip.txt
+# 本地运行日志（凭证续期日志/状态、临时产物）
+logs/
 # _ 前缀 = 临时/含凭证的一次性脚本（如 _ssh.py 带明文密码，勿提交）
 tools/_*.py
 tools/_*.js
